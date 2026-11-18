@@ -2,7 +2,6 @@ from datetime import timedelta
 from uuid import uuid4
 
 from billiard.exceptions import SoftTimeLimitExceeded
-from celery import Celery
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import OperationalError
 
@@ -10,6 +9,7 @@ from app.agents.workflow import AnalysisInput, JobCancelled, run
 from app.analytics import data
 from app.core.config import settings
 from app.core.observability import jobs, log
+from app.core.task_queue import celery
 from app.db.models import (
     Artifact,
     Dataset,
@@ -24,21 +24,6 @@ from app.db.models import (
 )
 from app.db.session import SessionLocal
 from app.services import reports, storage
-
-config = settings()
-celery = Celery("analyst", broker=config.redis_url or "memory://")
-celery.conf.update(
-    task_ignore_result=True,
-    task_always_eager=config.eager,
-    task_acks_late=True,
-    task_reject_on_worker_lost=True,
-    worker_prefetch_multiplier=1,
-    task_time_limit=config.job_timeout,
-    task_soft_time_limit=config.job_timeout - 2,
-    broker_connection_retry_on_startup=True,
-    broker_transport_options={"visibility_timeout": 360},
-    beat_schedule={"poll-analysis": {"task": "analyst.dispatch_due", "schedule": 30}},
-)
 
 
 def enqueue(job_id: str):

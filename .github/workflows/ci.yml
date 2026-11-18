@@ -44,7 +44,14 @@ jobs:
       - run: docker compose up --build --wait --wait-timeout 180
       - working-directory: frontend
         run: npm ci && npm run check && npx playwright install --with-deps chromium && npm test
-      - if: failure()
-        run: docker compose logs --tail=150
+      - name: Collect Compose diagnostics
+        if: failure()
+        run: |
+          docker compose ps -a
+          worker_id="$(docker compose ps -aq worker)"
+          if [ -n "$worker_id" ]; then
+            docker inspect --format '{{json .State.Health}}' "$worker_id"
+          fi
+          docker compose logs --tail=150
       - if: always()
         run: docker compose down

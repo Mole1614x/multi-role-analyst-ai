@@ -4,6 +4,7 @@
 | --- | --- |
 | Browser receives 403 on a form | Match the browser URL to `ANALYST_ORIGIN`. Check scheme and port |
 | API readiness fails | Inspect the migration exit status, PostgreSQL logs, and Redis health |
+| Compose reports an unhealthy worker | Run `docker compose logs --tail=100 worker` and `docker compose exec -T worker python -m app.core.worker_health` to check the broker and worker response |
 | Jobs stay queued | Check the Redis broker, Celery worker health, and Beat dispatch logs |
 | A worker exits during a job | Beat recovers expired jobs. Review the trace, attempt count, and task timeout |
 | Dataset import is rejected | Check the documented file type, size, table or sheet name, and data limits |

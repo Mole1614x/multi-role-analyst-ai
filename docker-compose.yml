@@ -69,11 +69,11 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.services.jobs.celery inspect ping -d celery@$$HOSTNAME -t 3"]
-      interval: 30s
+      test: ["CMD", "python", "-m", "app.core.worker_health"]
+      interval: 10s
       timeout: 12s
-      retries: 3
-      start_period: 25s
+      retries: 4
+      start_period: 45s
     restart: unless-stopped
   scheduler:
     <<: *backend
