@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from app.analytics.specialists import calculate
 
@@ -68,3 +69,64 @@ def test_cohort_churn_includes_zero_denominator():
             },
         ]
     }
+
+
+@pytest.mark.parametrize(
+    ("role", "prompt", "inputs", "metric", "expected"),
+    [
+        ("data", "Pearson correlation", {"x": [1, 2, 3, None], "y": [2, 4, 6, 8]}, "pearson_r", 1),
+        (
+            "business",
+            "Business case",
+            {"expected_benefit": [90, 30], "implementation_cost": [50, 30]},
+            "return_on_cost",
+            0.5,
+        ),
+        (
+            "market",
+            "TAM, SAM, SOM",
+            {
+                "total_accounts": [200, 100],
+                "serviceable_accounts": [100, 60],
+                "obtainable_accounts": [40, 20],
+                "annual_revenue_per_account": [5, 10],
+            },
+            "som",
+            400,
+        ),
+        (
+            "sales",
+            "Weighted pipeline",
+            {"deal_amount": [100, 50], "probability": [0.5, 0.2]},
+            "weighted_amount",
+            60,
+        ),
+        (
+            "hr",
+            "Hiring funnel",
+            {"applicants": [60], "interviewed": [30], "hired": [15]},
+            "interview_to_hire_rate",
+            0.5,
+        ),
+        (
+            "operations",
+            "Inventory coverage",
+            {"average_inventory": [20, 40], "daily_demand": [4, 6]},
+            "days_of_supply",
+            6,
+        ),
+        ("bi", "Key uniqueness", {"record_key": [" A ", "A", "B", None]}, "uniqueness_rate", 2 / 3),
+        ("risk", "Expected loss", {"impact": [100, 300], "probability": [0.1, 0.2]}, "expected_loss", 70),
+        ("investment", "Maximum drawdown", {"period_return": [0.2, -0.5, 0.1]}, "maximum_drawdown", 0.5),
+    ],
+)
+def test_other_specialist_methods(role, prompt, inputs, metric, expected):
+    finding = calculate(role, pd.DataFrame(inputs), prompt)[0]
+    assert finding["status"] == "computed", finding
+    assert finding["values"][metric] == pytest.approx(expected)
+
+
+def test_hiring_funnel_discloses_no_small_count():
+    frame = pd.DataFrame({"applicants": [40], "interviewed": [20], "hired": [9]})
+    result = calculate("hr", frame, "hiring funnel")[0]
+    assert "values" not in result

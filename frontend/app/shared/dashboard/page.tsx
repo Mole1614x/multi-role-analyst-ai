@@ -14,11 +14,11 @@ export default function SharedDashboard() {
   const token=useSyncExternalStore(subscribe,()=>window.location.hash.slice(1),()=>"");
   const valid=/^[A-Za-z0-9_-]{43}$/.test(token);
   const dashboard=useQuery({
-    queryKey:["shared-dashboard",token], enabled:valid, retry:false,
+    queryKey:["shared-dashboard",token], enabled:valid, retry:false, refetchInterval:15_000,
     queryFn:()=>api<DashboardSnapshot>("/public/dashboard",{headers:{Authorization:`Bearer ${token}`}}),
   });
   return <main className="panel stack">
-    {dashboard.data?<><h1>{dashboard.data.title}</h1><DashboardCharts chart={dashboard.data.chart}/></>:
+    {dashboard.data&&!dashboard.isError?<><h1>{dashboard.data.title}</h1><DashboardCharts chart={dashboard.data.chart}/></>:
       <p role="status">{valid&&dashboard.isPending?"Opening dashboard…":"This dashboard link is unavailable."}</p>}
   </main>;
 }

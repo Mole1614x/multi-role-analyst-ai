@@ -27,7 +27,7 @@ The deployable Compose stack is intended for evaluation and controlled internal 
 | Requirement | Status | Evidence |
 | --- | --- | --- |
 | Audit all 12 roles and add the first four specialist methods | Implemented, verification pending | [Role inventory, fields, formulas, and assumptions](SPECIALIST_ANALYSIS.md). |
-| Additional industry-specific methods across the other roles | Still open | The current methods are listed in the role inventory. |
+| Specialist expansion across the other nine roles | Implemented, verification pending | [Known-answer fixtures cover one additional calculation per role](SPECIALIST_ANALYSIS.md). Broader qualitative analysis and forecasting remain open. |
 | Durable multi-step workflows, inspection, approval, retry, and cancellation | Implemented, verification pending | Bounded plans run validated analytical steps. The next checkpoint, completed outputs, and approval index persist in the application database. |
 | Read full research sources and cite conflicting or insufficient evidence | Implemented, verification pending | Bounded HTTPS HTML/text retrieval and per-claim percentage checks. Broader claim types and live Brave verification remain open. |
 | Google Sheets, MySQL, and REST connectors | Implemented, verification pending | Named administrator-managed sources use the existing immutable import pipeline. |

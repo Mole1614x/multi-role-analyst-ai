@@ -251,12 +251,26 @@ def retry(project_id: str, job_id: str, db: DB, user: Actor):
         raise HTTPException(409, "Only failed or canceled jobs can be retried.")
     if job.requested_by != user.id:
         raise HTTPException(403, "Only the original requester can retry this job.")
-    job.status, job.error = "queued", None
-    job.recovery_count, job.failure_code = 0, None
-    if not job.payload.get("steps"):
-        job.trace = []
-    job.checkpoint_epoch += 1
-    job.payload = jobs.job_payload(job.payload)
+    changed = db.execute(
+        update(Job)
+        .where(
+            Job.id == job_id,
+            Job.status == job.status,
+            Job.attempt == job.attempt,
+            Job.checkpoint_epoch == job.checkpoint_epoch,
+        )
+        .values(
+            status="queued",
+            error=None,
+            recovery_count=0,
+            failure_code=None,
+            trace=job.trace if job.payload.get("steps") else [],
+            checkpoint_epoch=job.checkpoint_epoch + 1,
+            payload=jobs.job_payload(job.payload),
+        )
+    ).rowcount
+    if not changed:
+        raise HTTPException(409, "This job has already changed state.")
     audit(db, user, project.workspace_id, "job.retried", job_id)
     db.commit()
     jobs.enqueue(job_id)

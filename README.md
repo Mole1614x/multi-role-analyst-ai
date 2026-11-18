@@ -39,8 +39,9 @@ date,region,revenue,expenses
 ## Development and deployment
 
 - [Development setup](docs/DEVELOPMENT_SETUP.md) covers npm commands, local storage, and troubleshooting.
-- [Deployment](docs/DEPLOYMENT.md) covers Docker Compose, production services, and recovery. [Native services guide](docs/LOCAL_DEVELOPMENT_WITHOUT_DOCKER.md) covers running PostgreSQL, Redis, and Celery yourself.
+- [Deployment](docs/DEPLOYMENT.md) covers Docker Compose and production services. [Compose operations](docs/OPERATIONS.md) covers recovery, retention, and monitoring. [Native services guide](docs/LOCAL_DEVELOPMENT_WITHOUT_DOCKER.md) covers running PostgreSQL, Redis, and Celery yourself.
 - [Architecture](docs/ARCHITECTURE.md), [agent orchestration](docs/AGENT_ARCHITECTURE.md), [analyst roles](docs/ANALYST_ROLES.md), and [database design](docs/DATABASE_DESIGN.md) describe the application.
 - [API documentation](docs/API_DOCUMENTATION.md) describes the resources, isolation model, and asynchronous jobs.
+- [Specialist methods](docs/SPECIALIST_ANALYSIS.md) lists formulas and input fields. [Configured connectors](docs/CONNECTORS.md) covers Sheets, MySQL, REST, and PostgreSQL imports.
 - [Security](docs/SECURITY.md), [testing](docs/TESTING.md), and [troubleshooting](docs/TROUBLESHOOTING.md) describe verification and operational boundaries.
 - [Implementation status](docs/IMPLEMENTATION_STATUS.md) records working features, scope limits, and deployment readiness.

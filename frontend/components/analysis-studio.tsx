@@ -21,7 +21,7 @@ const modes = {
 
 function useJobs(context:Context) {
   const {base,project}=context;
-  return useQuery({queryKey:["jobs",project.id],queryFn:()=>api<Job[]>(base+"/jobs"),
+  return useQuery({queryKey:["jobs",project.id],queryFn:()=>api<Job[]>(base+"/jobs"), refetchOnMount:"always",
     refetchInterval:query=>query.state.data?.some(row=>!finished(row.status))?1500:false});
 }
 

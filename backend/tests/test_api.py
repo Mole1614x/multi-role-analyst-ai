@@ -356,3 +356,30 @@ def test_connector_scope_and_common_import_pipeline(client, monkeypatch):
         assert rest.called and sheet.calls[0].request.headers["X-Goog-Api-Key"] == "mock-test-key"
         rest.mock(return_value=httpx.Response(302, headers={"Location": "https://elsewhere.example/"}))
         assert client.post(base + "/connectors", json=request).status_code == 422
+
+
+def test_research_job_records_per_claim_evidence(client, monkeypatch):
+    from app.agents import evidence, providers
+    from app.core.config import settings
+
+    _, _, workspace = account(client)
+    base = project(client, workspace)
+    source = {"url": "https://reports.example/a", "title": "Adoption report"}
+    monkeypatch.setattr(settings(), "research_api_key", "synthetic-key")
+    monkeypatch.setattr(providers, "research", lambda query: [source])
+    monkeypatch.setattr(evidence, "read_source", lambda url: (url, "Regional adoption 2025 was 25%."))
+    response = client.post(
+        base + "/analyses",
+        json={
+            "prompt": "Regional adoption 2025",
+            "mode": "research",
+            "approve_external": True,
+            "claims": [{"subject": "Regional adoption 2025", "percent": 25}],
+        },
+    )
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["status"] == "completed", body
+    check = body["result"]["claim_checks"][0]
+    assert check["status"] == "supported"
+    assert check["citations"][0]["url"] == source["url"]
