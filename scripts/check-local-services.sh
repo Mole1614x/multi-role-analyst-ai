@@ -38,7 +38,7 @@ else:
 if not config.redis_url:
     print("Redis is not configured. Set REDIS_URL in .env.", file=sys.stderr)
     failures += 1
-if not config.broker_url or config.eager:
+if not config.broker_url or config.task_backend != "celery":
     print("Celery background processing is disabled. Configure its Redis broker and ANALYST_EAGER.", file=sys.stderr)
     failures += 1
 

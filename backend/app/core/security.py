@@ -94,9 +94,10 @@ def audit(db: DBSession, user: User, workspace_id: str, action: str, subject: st
 
 
 def limiter(key: str, limit: int, seconds: int):
-    url = settings().redis_url
-    if not url:
+    config = settings()
+    if config.task_backend == "local" or not config.redis_url:
         return
+    url = config.redis_url
     try:
         with Redis.from_url(url, socket_connect_timeout=2, socket_timeout=2) as client:
             script = """

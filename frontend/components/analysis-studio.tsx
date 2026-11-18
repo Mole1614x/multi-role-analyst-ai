@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Bot, Download, Play, Save, Sparkles } from "lucide-react";
@@ -9,8 +9,8 @@ import { ChartView, Empty, ErrorNote, getVersion, Heading, Table, VersionSelect 
 import { NoDataset } from "@/components/data-studio";
 import { Button } from "@/components/ui/button";
 import type { Context } from "@/components/project";
+import { finished, useActiveJob } from "@/lib/jobs";
 
-const finished = (status:string) => ["completed","failed","canceled"].includes(status);
 const modes = {
   chat:["AI analysts","Ask a question about your data and inspect the results and execution trace."],
   research:["Research","Collect source candidates with retrieval dates and publisher information."],
@@ -22,35 +22,6 @@ function useJobs(context:Context) {
   const {base,project}=context;
   return useQuery({queryKey:["jobs",project.id],queryFn:()=>api<Job[]>(base+"/jobs"),
     refetchInterval:query=>query.state.data?.some(row=>!finished(row.status))?1500:false});
-}
-
-function useActiveJob(context:Context,id:string) {
-  const {base,project}=context;
-  const cache=useQueryClient();
-  const key=["job",project.id,id];
-  const query=useQuery({queryKey:key,queryFn:()=>api<Job>(`${base}/jobs/${id}`),enabled:!!id,
-    refetchInterval:query=>query.state.data && finished(query.state.data.status) ? false : 1600});
-  const terminal=!!query.data && finished(query.data.status);
-  useEffect(() => {
-    if (!id || terminal) return;
-    const channel = new EventSource(`/api${base}/jobs/${id}/events`);
-    channel.onmessage = event => {
-      try {
-        const update:Job=JSON.parse(event.data);
-        cache.setQueryData(["job",project.id,id],update);
-        if (finished(update.status)) channel.close();
-      } catch {channel.close();}
-    };
-    channel.onerror=()=>channel.close();
-    return ()=>channel.close();
-  },[base,cache,id,project.id,terminal]);
-  useEffect(()=>{
-    if(terminal) {
-      void cache.invalidateQueries({queryKey:["jobs",project.id]});
-      if(query.data?.kind==="import") void cache.invalidateQueries({queryKey:["datasets",project.id]});
-    }
-  },[cache,project.id,query.data?.kind,terminal]);
-  return query;
 }
 
 function healthLabel(status:string) {
@@ -166,6 +137,7 @@ export function AnalysisStudio({context,section}: {context:Context;section:keyof
     <option value="">{optional?"None":"Choose a column"}</option>{columns.map(c=><option key={c.name}>{c.name}</option>)}</select></label>;
   return <>
     <Heading title={modes[section][0]} description={modes[section][1]}/>
+    {section==="chat"&&config.llm==="none"&&<p className="panel muted">Deterministic analyses are available. AI-powered planning requires a configured OpenAI or Gemini API key.</p>}
     {research&&!config.research ? <Empty title="Research provider unavailable" description="Live source discovery becomes available when an operator configures Brave Search."/>
       :!research&&!datasets.length?<NoDataset base={base}/>:!readOnly&&<form className="panel stack" onSubmit={submit}>
       <div className="spread"><h2>{section==="chat"?<><Bot size={19}/> New analysis</>:modes[section][0]}</h2></div>

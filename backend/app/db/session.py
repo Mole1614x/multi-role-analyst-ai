@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from sqlalchemy import create_engine, event, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import settings
@@ -9,6 +12,14 @@ class Base(DeclarativeBase):
 
 
 database_url = settings().database_url
+url = make_url(database_url)
+if (
+    url.get_backend_name() == "sqlite"
+    and url.database not in {None, "", ":memory:"}
+    and not url.query.get("uri")
+):
+    Path(url.database).parent.mkdir(parents=True, exist_ok=True)
+
 engine = create_engine(
     database_url,
     pool_pre_ping=True,

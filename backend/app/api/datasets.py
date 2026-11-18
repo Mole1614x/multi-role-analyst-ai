@@ -78,6 +78,7 @@ def upload(
     project_id: str,
     db: DB,
     user: Actor,
+    response: Response,
     file: Annotated[UploadFile, File()],
     table: Annotated[str, Form(max_length=120)] = "",
     background: Annotated[bool, Form()] = False,
@@ -98,7 +99,9 @@ def upload(
         raise HTTPException(422, "The uploaded file is empty.")
     if len(content) > config.max_upload_bytes:
         raise HTTPException(413, f"The file exceeds {config.max_upload_bytes:,} bytes.")
-    if (background or len(content) > 2_000_000) and not config.eager:
+    if config.task_backend == "local" or (
+        config.task_backend == "celery" and (background or len(content) > 2_000_000)
+    ):
         from app.api.analysis import reserve_job
 
         reserve_job(db, project)
@@ -109,7 +112,7 @@ def upload(
                 project_id=project_id,
                 requested_by=user.id,
                 kind="import",
-                payload={"key": key, "filename": name, "table": table or None},
+                payload=jobs.job_payload({"key": key, "filename": name, "table": table or None}),
             )
             db.add(job)
             db.flush()
@@ -119,6 +122,8 @@ def upload(
             storage.remove(key)
             raise
         jobs.enqueue(job.id)
+        if config.task_backend == "local":
+            response.status_code = 202
         return {"job_id": job.id}
     try:
         frame = data.parse(content, name, table or None)

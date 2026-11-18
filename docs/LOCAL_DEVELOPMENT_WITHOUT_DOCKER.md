@@ -1,4 +1,6 @@
-# Local development without Docker
+# Optional native PostgreSQL and Redis setup
+
+Use the [npm quick start](../README.md#quick-start) to develop with SQLite. Follow this guide when you need to develop against the same database and job broker used in deployment.
 
 The native stack runs FastAPI, the Celery worker, and Celery Beat from `backend/.venv`. Next.js uses Node.js and installs packages into `frontend/node_modules`. PostgreSQL and Redis run as local services.
 

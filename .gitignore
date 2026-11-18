@@ -16,3 +16,6 @@ frontend/playwright-report/
 .DS_Store
 backend/*.egg-info/
 frontend/.env.local
+.env.development.local
+/backend/data/
+/node_modules/
