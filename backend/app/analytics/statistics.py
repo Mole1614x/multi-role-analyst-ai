@@ -21,8 +21,8 @@ def forecast(frame: pd.DataFrame, date: str, value: str, horizon: int) -> dict:
     daily = valid.groupby(valid["date"].dt.floor("D"))["value"].sum()
     if len(daily) < 12:
         raise ValueError("Forecasting requires at least twelve distinct observed dates.")
-    with pd.option_context("future.infer_freq_returns_offset", False):
-        frequency = pd.infer_freq(daily.index)
+    inferred = pd.infer_freq(daily.index)
+    frequency = pd.tseries.frequencies.to_offset(inferred).freqstr if inferred is not None else None
     if frequency is None:
         raise ValueError("Provide dates at a regular daily, weekly, or monthly frequency without gaps.")
     daily = daily.asfreq(frequency)

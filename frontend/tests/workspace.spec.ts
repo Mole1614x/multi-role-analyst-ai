@@ -68,7 +68,7 @@ test("register, run multi-role analysis, save dashboard, download report and reo
 
   await workspaceLink(page,"Reports").click();
   await page.getByLabel("Report title").fill("Regional revenue report");
-  await page.getByLabel("Format",{exact:true}).selectOption("csv");
+  await page.getByRole("combobox",{name:"Format",exact:true}).selectOption("csv");
   await page.getByRole("button",{name:"Generate report"}).click();
   const report=page.getByRole("link",{name:"Download CSV"});
   await expect(report).toBeVisible({timeout:30_000});

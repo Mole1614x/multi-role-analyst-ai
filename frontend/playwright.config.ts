@@ -9,6 +9,7 @@ export default defineConfig({
   use: {
     ...devices["Desktop Chrome"],
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000",
+    actionTimeout: 20_000,
     launchOptions: {executablePath: process.env.CHROMIUM_PATH || undefined},
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
