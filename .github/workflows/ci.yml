@@ -1,0 +1,57 @@
+name: Verify platform
+
+on:
+  pull_request:
+  push:
+    branches: [main, "codex/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    env:
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked
+      - run: uv run ruff check app tests alembic
+      - run: uv run ruff format --check app tests alembic
+      - run: uv run pytest -q
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Configure the isolated build
+        run: |
+          cp .env.example .env
+          python3 -c 'from pathlib import Path; from secrets import token_hex; p=Path(".env"); p.write_text(p.read_text().replace("POSTGRES_PASSWORD=\n", "POSTGRES_PASSWORD="+token_hex(24)+"\n"))'
+      - run: docker compose up --build --wait --wait-timeout 180
+      - working-directory: frontend
+        run: npm ci && npm run check && npx playwright install --with-deps chromium && npm test
+      - name: Collect Compose diagnostics
+        if: failure()
+        run: |
+          docker compose ps -a
+          worker_id="$(docker compose ps -aq worker)"
+          if [ -n "$worker_id" ]; then
+            docker inspect --format '{{json .State.Health}}' "$worker_id"
+          fi
+          docker compose logs --tail=150
+      - if: always()
+        run: docker compose down
