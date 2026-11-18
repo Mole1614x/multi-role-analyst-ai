@@ -106,3 +106,72 @@ test("mobile navigation, form validation, project empty state and theme",async({
   await page.getByRole("button",{name:"Use dark theme"}).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme","dark");
 });
+
+test("approve a workflow, filter dashboard panels, and revoke a public link",async({page,browser,baseURL})=>{
+  await register(page,"Jamie");
+  const workspace=(await (await page.request.get("/api/workspaces")).json())[0];
+  const project=await page.request.post("/api/projects",{data:{
+    workspace_id:workspace.id,name:"Workflow workspace",roles:["sales"],
+  }});
+  expect(project.status()).toBe(201);
+  const id=(await project.json()).id;
+  const base=`/projects/${id}`;
+  const importResponse=await page.request.post(`/api${base}/datasets`,{multipart:{
+    file:{name:"workflow.csv",mimeType:"text/csv",buffer:Buffer.from(sales)},
+  }});
+  expect([201,202]).toContain(importResponse.status());
+  await expect.poll(async()=> (await (await page.request.get(`/api${base}/datasets`)).json()).length).toBe(1);
+
+  await page.goto(base+"/chat");
+  await page.getByLabel("Analysis request").fill("Total revenue by region");
+  await page.getByRole("button",{name:"Add analysis step"}).click();
+  await page.getByLabel("Step 2 request").fill("Average revenue by region");
+  await page.getByLabel("Require approval").check();
+  await page.getByRole("button",{name:"Run analysis"}).click();
+  await expect(page.getByText(/Step 2 needs approval/)).toBeVisible();
+  await page.reload();
+  await page.getByRole("button",{name:/Total revenue by region/}).click();
+  await page.getByRole("button",{name:"Approve step"}).click();
+  await expect(page.getByText(/2 workflow steps completed/)).toBeVisible();
+  await page.getByLabel("Dashboard title").fill("Workflow dashboard");
+  await page.getByRole("button",{name:"Save dashboard"}).click();
+  await expect(page.getByText("Dashboard saved.")).toBeVisible();
+
+  const current=(await (await page.request.get(`/api${base}/datasets`)).json())[0].versions[0].id;
+  const queued=await page.request.post(`/api${base}/analyses`,{data:{
+    prompt:"Total expenses by region",version_id:current,
+  }});
+  expect(queued.status()).toBe(202);
+  const other=(await queued.json()).id;
+  await expect.poll(async()=> (await (await page.request.get(`/api${base}/jobs/${other}`)).json()).status).toBe("completed");
+  await workspaceLink(page,"Dashboards").click();
+  await page.getByRole("checkbox",{name:"Total expenses by region"}).check();
+  await page.getByRole("checkbox",{name:"Total revenue by region"}).check();
+  await page.getByLabel("Title",{exact:true}).fill("Compare both measures");
+  await page.getByRole("button",{name:"Create dashboard"}).click();
+  const dashboard=page.locator("section").filter({has:page.getByRole("heading",{name:"Compare both measures",exact:true})});
+  await dashboard.getByLabel("Filter all charts by region").selectOption({label:"South"});
+  for (const details of await dashboard.getByText("View chart data").all()) await details.click();
+  await expect(dashboard.getByRole("cell",{name:"South",exact:true})).toHaveCount(2);
+  await expect(dashboard.getByRole("cell",{name:"North",exact:true})).toHaveCount(0);
+
+  await dashboard.getByText("Public sharing",{exact:true}).click();
+  await dashboard.getByRole("button",{name:"Create public link"}).click();
+  const link=dashboard.getByLabel("Read-only link");
+  await expect(link).toHaveValue(/\/shared\/dashboard#/);
+  const publicLink=await link.inputValue();
+  const publicContext=await browser.newContext({baseURL});
+  try {
+    const guest=await publicContext.newPage();
+    await guest.goto(publicLink);
+    await expect(guest.getByRole("heading",{name:"Compare both measures"})).toBeVisible();
+    await expect(guest.getByRole("heading",{name:"Workflow dashboard"})).toHaveCount(0);
+    await expect(guest.getByRole("button",{name:"Revoke public link"})).toHaveCount(0);
+    await dashboard.getByRole("button",{name:"Revoke public link"}).click();
+    await expect(link).toHaveCount(0);
+    await guest.reload();
+    await expect(guest.getByText("This dashboard link is unavailable.")).toBeVisible();
+  } finally {
+    await publicContext.close();
+  }
+});

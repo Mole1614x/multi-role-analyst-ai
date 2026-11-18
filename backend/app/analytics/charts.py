@@ -86,6 +86,7 @@ def build(frame: pd.DataFrame, spec: ChartSpec) -> dict:
     return {
         "type": kind,
         "x": "group",
+        "dimension": x,
         "y": "value",
         "rows": json_rows(limited.rename("value").rename_axis("group").reset_index()),
         "method": f"{spec.aggregation} of {y or 'rows'} grouped by {x}",

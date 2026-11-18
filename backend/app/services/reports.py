@@ -114,6 +114,13 @@ def generate(format_name: str, title: str, result: dict) -> bytes:
         ("Recommendations", result.get("recommendations", [])),
         ("Generated", stamped),
     ]
+    for index, step in enumerate(result.get("completed_steps", []), start=1):
+        details = {
+            key: step[key]
+            for key in ("summary", "source", "method", "role_findings", "claim_checks", "limitations")
+            if key in step
+        }
+        sections.append((f"Workflow step {index} / {step['plan']['objective']}", details))
     if result.get("query"):
         sections.append(("Executed SQL", result["query"]["sql"]))
     for item in result.get("role_findings", []):
@@ -125,6 +132,8 @@ def generate(format_name: str, title: str, result: dict) -> bytes:
             sections.append(
                 (key.title(), {k: v for k, v in result[key].items() if k not in {"predictions", "observed"}})
             )
+    for check in result.get("claim_checks", []):
+        sections.append(("Research claim and citations", check))
     for source in result.get("evidence", []):
         sections.append(
             ("Source reference", f"{source['title']} | {source['url']} | {source['retrieved_at']}")

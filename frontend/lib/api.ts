@@ -32,18 +32,21 @@ export type Version = {id:string; dataset_id:string; number:number; sha256:strin
 export type Dataset = {id:string; name:string; source:string; versions:Version[]};
 export type QueryResult = {sql:string; columns:string[]; rows:Row[]; truncated:boolean; engine:string; source_versions?:string[]};
 export type SavedQuery = {id:string; title:string; version_id:string; sql:string; result:QueryResult};
-export type Chart = {type:string; x?:string; y?:string; columns?:string[]; rows:Row[]; method:string; truncated?:boolean; title?:string};
-export type Finding = {role:string; metric:string; method:string; review:string; status:string; values?:Record<string,number|null>; reason?:string};
-export type Evidence = {url:string; title:string; publisher:string; snippet:string; retrieved_at:string; assessment:string};
+export type Chart = {type:string; x?:string; y?:string; columns?:string[]; rows:Row[]; method:string; truncated?:boolean; title?:string; dimension?:string};
+export type Finding = {role:string; metric:string; method:string; review:string; status:string; values?:Record<string,unknown>; reason?:string; excluded_rows?:number};
+export type Evidence = {url:string; title:string; publisher:string; snippet:string; retrieved_at:string; assessment:string; read_status?:string};
+export type ClaimCheck = {claim:{subject:string;percent:string};status:string;citations:{url:string;title:string;retrieved_at:string;excerpt:string;stance:string}[]};
 export type Result = {
-  summary?:string; source?:{version_id:string; version:number; sha256:string}; plan?:{objective:string}; method?:string;
-  chart?:Chart; query?:QueryResult; role_findings?:Finding[]; evidence?:Evidence[]; limitations?:string[];
+  completed_steps?:Result[]; steps?:{prompt:string; mode:string; require_approval:boolean; external?:boolean}[]; pending_approval?:number|null;
+  claim_checks?:ClaimCheck[]; summary?:string; source?:{version_id:string; version:number; sha256:string}; plan?:{objective:string}; method?:string;
+  chart?:Chart|null; query?:QueryResult; role_findings?:Finding[]; evidence?:Evidence[]; limitations?:string[];
   assumptions?:string[]; recommendations?:string[];
   provider_usage?:Record<string, unknown>; forecast?:Record<string, unknown>; model?:Record<string, unknown>;
   comparison?:Record<string, unknown>; artifact_id?:string; format?:string; title?:string; dataset_id?:string; version_id?:string;
 };
 export type Job = {id:string; kind:string; status:string; prompt:string; result:Result|null; error:string|null; created_at:string; attempt:number; has_chart:boolean;
   trace:{step:string; details:Record<string, unknown>; at:string}[]};
-export type Dashboard = {id:string; title:string; job_id:string; chart:Chart | {panels:Chart[]}};
+export type DashboardSnapshot = {title:string; chart:Chart | {panels:Chart[]}};
+export type Dashboard = DashboardSnapshot & {id:string; job_id:string; shared:boolean};
 export type Schedule = {id:string; prompt:string; interval_minutes:number; next_at:string; enabled:boolean};
 export type Config = {password_reset:boolean; llm:string; research:boolean};

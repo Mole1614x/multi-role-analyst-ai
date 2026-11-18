@@ -21,3 +21,21 @@ The deployable Compose stack is intended for evaluation and controlled internal 
 - A PostgreSQL and Redis integration run verified Alembic startup, Celery worker readiness, queued imports and reports, scheduled dispatch, and recovery from a durable LangGraph checkpoint.
 - npm and Python dependency audits reported zero known vulnerabilities in the audited runtime dependency sets.
 - OpenAI, Gemini, and Brave Search contracts were exercised with mocked responses. Live providers, SMTP delivery, and S3 require deployment credentials for live verification.
+
+## Production-readiness branch
+
+| Requirement | Status | Evidence |
+| --- | --- | --- |
+| Audit all 12 roles and add the first four specialist methods | Implemented, verification pending | [Role inventory, fields, formulas, and assumptions](SPECIALIST_ANALYSIS.md). |
+| Additional industry-specific methods across the other roles | Still open | The current methods are listed in the role inventory. |
+| Durable multi-step workflows, inspection, approval, retry, and cancellation | Implemented, verification pending | Bounded plans run validated analytical steps. The next checkpoint, completed outputs, and approval index persist in the application database. |
+| Read full research sources and cite conflicting or insufficient evidence | Implemented, verification pending | Bounded HTTPS HTML/text retrieval and per-claim percentage checks. Broader claim types and live Brave verification remain open. |
+| Google Sheets, MySQL, and REST connectors | Implemented, verification pending | Named administrator-managed sources use the existing immutable import pipeline. |
+| Additional warehouse connectors | Still open | The baseline report names warehouses as a category and does not specify a vendor, authentication method, or import contract. |
+| Dashboard-wide filters and revocable sharing | Implemented, verification pending | Snapshot-only public endpoints with opt-in management and hashed tokens. |
+| PostgreSQL and local artifact backup and restore | Implemented, verification pending | [Recovery runbook and disposable-deployment drill](OPERATIONS.md). |
+| Retention, queue depth, worker health, failure and retry exhaustion visibility | Implemented, verification pending | Operator retention policy, Compose worker health, persisted job counts, and Redis broker depth. |
+| Production load and defensive checks | Implemented, verification pending | GitHub Actions runs the isolated synthetic deployment exercise. |
+| Linux npm, Compose and browser regression checks | Verification pending | GitHub Actions verifies fresh builds and installations. |
+| Windows and available macOS npm checks | Verification pending | GitHub Actions includes both hosts. macOS Monterey is blocked on a Monterey host. |
+| Live OpenAI, Gemini, Brave, SMTP, and S3 | Blocked | Requires authorized service environments and credentials. Current provider HTTP fixtures are mocked. |
