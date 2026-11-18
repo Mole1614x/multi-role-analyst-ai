@@ -1,14 +1,16 @@
 from pathlib import PurePath
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 from zipfile import BadZipFile
 
+import httpx
 import pyarrow as pa
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from app.analytics import connectors as sources
 from app.analytics import data
 from app.api.common import version_for
 from app.core.config import settings
@@ -26,7 +28,8 @@ class Cleaning(BaseModel):
 
 class Connector(BaseModel):
     source: str = Field(max_length=100)
-    table: str = Field(min_length=1, max_length=140)
+    table: str = Field(default="", max_length=140)
+    type: Literal["postgresql", "mysql", "google_sheets", "rest"] = "postgresql"
 
 
 def item(version: Version) -> dict:
@@ -148,10 +151,12 @@ def upload(
 @router.get("/connectors")
 def connectors(project_id: str, db: DB, user: Actor):
     project_for(db, user, project_id)
+    if user.id not in settings().admin_user_ids:
+        return []
     return [
-        {"name": name, "type": "postgresql"}
-        for name in sorted(settings().postgres_sources)
-        if user.id in settings().admin_user_ids
+        {"name": name, "type": kind}
+        for kind, configured in sources.available().items()
+        for name in sorted(configured)
     ]
 
 
@@ -159,17 +164,27 @@ def connectors(project_id: str, db: DB, user: Actor):
 def connect(project_id: str, body: Connector, db: DB, user: Actor):
     project = project_for(db, user, project_id, write=True)
     if user.id not in settings().admin_user_ids:
-        raise HTTPException(403, "Only deployment administrators can import configured database sources.")
-    from sqlalchemy.exc import SQLAlchemyError
-
+        raise HTTPException(403, "Only deployment administrators can import configured sources.")
+    limiter(f"imports:{user.id}", 45, 60)
+    selected = sources.available()[body.type].get(body.source)
+    if selected is None:
+        raise HTTPException(404, "The configured connector is unavailable.")
     try:
-        return import_frame(
-            project, db, user, data.import_postgres(body.source, body.table), body.table, body.source
-        )
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except SQLAlchemyError as exc:
+        if body.type == "postgresql":
+            frame = data.import_postgres(body.source, body.table)
+        elif body.type == "mysql":
+            frame = sources.mysql(selected, body.table)
+        elif body.type == "google_sheets":
+            frame = sources.sheets(selected)
+        else:
+            frame = sources.rest(selected)
+        name = body.table if body.type in {"postgresql", "mysql"} else body.source
+        return import_frame(project, db, user, frame, name, body.source)
+    except (httpx.HTTPError, SQLAlchemyError) as exc:
         raise HTTPException(422, "The configured source or table is unavailable.") from exc
+    except ValueError as exc:
+        message = str(exc) if type(exc) is ValueError else "The configured source returned invalid data."
+        raise HTTPException(422, message) from exc
 
 
 @router.get("/versions/{version_id}")

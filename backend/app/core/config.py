@@ -4,12 +4,23 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL, make_url
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8000"
+
+
+class SheetSource(BaseModel):
+    spreadsheet_id: str = Field(pattern=r"^[A-Za-z0-9_-]{5,150}$")
+    range: str = Field(min_length=1, max_length=200)
+
+
+class RestSource(BaseModel):
+    url: str = Field(max_length=2000, repr=False)
+    records_key: str = Field(default="", max_length=150)
+    bearer: SecretStr | None = None
 
 
 class Settings(BaseSettings):
@@ -70,7 +81,12 @@ class Settings(BaseSettings):
     smtp_from: str = ""
     smtp_username: str = ""
     smtp_password: str = ""
-    postgres_sources: dict[str, str] = {}
+    postgres_sources: dict[str, str] = Field(default_factory=dict, repr=False)
+    mysql_sources: dict[str, str] = Field(default_factory=dict, repr=False)
+    google_sheets_sources: dict[str, SheetSource] = Field(default_factory=dict)
+    google_sheets_api_key: str = Field(default="", repr=False)
+    google_sheets_access_token: str = Field(default="", repr=False)
+    rest_sources: dict[str, RestSource] = Field(default_factory=dict)
     admin_user_ids: list[str] = []
 
     @field_validator("backend_url", "origin")

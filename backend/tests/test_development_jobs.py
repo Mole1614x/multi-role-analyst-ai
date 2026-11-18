@@ -108,3 +108,33 @@ def test_local_worker_keeps_a_fixed_capacity():
     finally:
         worker.close()
         release.set()
+
+
+def test_scheduler_records_retry_exhaustion(client, monkeypatch):
+    from datetime import timedelta
+
+    from app.db.models import now
+
+    _, user_id, workspace = account(client)
+    base = project(client, workspace)
+    project_id = base.rsplit("/", 1)[-1]
+    monkeypatch.setattr(jobs, "enqueue", lambda _job_id: None)
+    with SessionLocal() as db:
+        job = Job(
+            project_id=project_id,
+            requested_by=user_id,
+            kind="analysis",
+            status="running",
+            payload={},
+            attempt=5,
+            recovery_count=2,
+            started_at=now() - timedelta(minutes=10),
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.id
+    jobs.dispatch_due()
+    result = client.get(base + f"/jobs/{job_id}").json()
+    assert result["status"] == "failed"
+    assert result["failure_code"] == "retry_exhausted"
+    assert 'failure_code="retry_exhausted",kind="analysis",status="failed"' in client.get("/metrics").text

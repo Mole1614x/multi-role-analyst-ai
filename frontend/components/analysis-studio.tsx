@@ -8,19 +8,20 @@ import { api, json, type Dashboard, type Job, type Result, type Schedule } from 
 import { ChartView, Empty, ErrorNote, getVersion, Heading, Table, VersionSelect } from "@/components/common";
 import { NoDataset } from "@/components/data-studio";
 import { Button } from "@/components/ui/button";
+import { DashboardCharts } from "@/components/dashboard-charts";
 import type { Context } from "@/components/project";
 import { finished, useActiveJob } from "@/lib/jobs";
 
 const modes = {
   chat:["AI analysts","Ask a question about your data and inspect the results and execution trace."],
-  research:["Research","Collect source candidates with retrieval dates and publisher information."],
+  research:["Research","Read discovered sources and check percentage claims against cited passages."],
   forecast:["Forecasting & models","Compare baselines and evaluate forecasts, models, or a statistical test."],
   visualize:["Visualization builder","Choose data fields and generate a chart from verified values."],
 } as const;
 
 function useJobs(context:Context) {
   const {base,project}=context;
-  return useQuery({queryKey:["jobs",project.id],queryFn:()=>api<Job[]>(base+"/jobs"),
+  return useQuery({queryKey:["jobs",project.id],queryFn:()=>api<Job[]>(base+"/jobs"), refetchOnMount:"always",
     refetchInterval:query=>query.state.data?.some(row=>!finished(row.status))?1500:false});
 }
 
@@ -37,23 +38,32 @@ function ResultView({result,context}: {result:Result;context:Context}) {
   return <div className="stack">
     {result.summary&&<p className="analysis-summary">{result.summary}</p>}
     {result.source&&<p className="muted">Dataset version {result.source.version}{result.method?" · "+result.method:""}</p>}
-    {!!result.role_findings?.length&&<div className="findings">{result.role_findings.map(item=><article key={item.role} className="finding stack">
+    {!!result.role_findings?.length&&<div className="findings">{result.role_findings.map(item=><article key={item.role+item.metric} className="finding stack">
       <div className="spread"><b>{item.metric}</b><span className={`pill ${item.status}`}>{healthLabel(item.status)}</span></div>
       {item.values&&<dl>{Object.entries(item.values).map(([key,value])=><div className="spread" key={key}>
-        <dt>{key.replaceAll("_"," ")}</dt><dd>{value===null?"—":new Intl.NumberFormat(undefined,{maximumFractionDigits:6}).format(value)}</dd></div>)}</dl>}
-      <small className="muted">{item.reason??item.review}</small></article>)}</div>}
+        <dt>{key.replaceAll("_"," ")}</dt><dd>{value===null?"—":typeof value==="number"?new Intl.NumberFormat(undefined,{maximumFractionDigits:6}).format(value):
+          <pre>{JSON.stringify(value,null,2)}</pre>}</dd></div>)}</dl>}
+      <small className="muted">{item.reason??item.review}{item.excluded_rows ? ` · ${item.excluded_rows} excluded rows` : ""}</small></article>)}</div>}
     {result.chart&&<ChartView chart={result.chart} filter/>}
     {result.query&&<details className="details" open={!result.chart}><summary>Executed SQL and results</summary>
       <pre>{result.query.sql}</pre><Table columns={result.query.columns} rows={result.query.rows}/></details>}
+    {result.claim_checks?.map((check,index)=><section className="finding stack" key={index}>
+      <div className="spread"><b>{check.claim.subject} · {check.claim.percent}%</b>
+        <span className="pill">{healthLabel(check.status.replaceAll("_"," "))}</span></div>
+      {check.citations.map((citation,i)=><blockquote key={i}><p>{citation.excerpt}</p>
+        <a className="text-link" href={citation.url} target="_blank" rel="noreferrer">{citation.title}</a>
+        <small className="muted"> · {new Date(citation.retrieved_at).toLocaleDateString()} · {citation.stance.replaceAll("_"," ")}</small></blockquote>)}</section>)}
     {result.evidence?.map(source=><article className="finding stack" key={source.url}><a className="text-link" href={source.url}
       target="_blank" rel="noreferrer">{source.title} <ArrowRight size={13}/></a><small className="muted">{source.publisher} · retrieved {new Date(source.retrieved_at).toLocaleDateString()}</small>
-      <p>{source.snippet}</p><small>{source.assessment}</small></article>)}
+      <p>{source.snippet}</p><small>{source.assessment} {source.read_status==="unavailable"&&"Full text unavailable."}</small></article>)}
     <Details title="Forecast evaluation and predictions" data={result.forecast}/>
     <Details title="Model metrics and feature weights" data={result.model}/>
     <Details title="Statistical test results" data={result.comparison}/>
     {!!result.limitations?.length&&<section className="analysis-notes"><h3>Limitations</h3><ul>{result.limitations.map(item=><li key={item}>{item}</li>)}</ul></section>}
     {!!result.assumptions?.length&&<section className="analysis-notes"><h3>Assumptions</h3><ul>{result.assumptions.map(item=><li key={item}>{item}</li>)}</ul></section>}
     {!!result.recommendations?.length&&<section className="analysis-notes"><h3>Recommendations</h3><ul>{result.recommendations.map(item=><li key={item}>{item}</li>)}</ul></section>}
+    {result.completed_steps?.map((step,index)=><details className="details" key={index}>
+      <summary>Step {index+1} · {step.plan?.objective}</summary><ResultView result={step} context={context}/></details>)}
     <Details title="Source and calculation metadata" data={result.source}/>
     {result.provider_usage&&!!Object.keys(result.provider_usage).length&&<Details title="Model usage" data={result.provider_usage}/>}
     {result.artifact_id&&<div><Button asChild variant="outline"><a href={`/api${context.base}/artifacts/${result.artifact_id}`}>
@@ -86,6 +96,8 @@ function JobView({context,id}: {context:Context;id:string}) {
   }
   if (active.error) return <ErrorNote error={active.error}/>;
   if (!job) return <div className="panel">Opening execution…</div>;
+  const approval=job.status==="awaiting_approval"?job.result?.pending_approval:null;
+  const approvalStep=approval==null?null:job.result?.steps?.[approval];
   return <section className="panel stack job-detail">
     <div className="spread"><div><span className="label">EXECUTION</span><h2>{job.prompt||"Analysis"}</h2></div>
       <span role="status" className={`pill ${job.status}`}>{healthLabel(job.status)}</span></div>
@@ -93,7 +105,13 @@ function JobView({context,id}: {context:Context;id:string}) {
     {!!job.trace.length&&<details className="details"><summary>Execution trace ({job.trace.length} steps)</summary>
       <ol className="trace">{job.trace.map((entry,i)=><li key={i}><strong>{entry.step}</strong> <small>{new Date(entry.at).toLocaleTimeString()}</small>
         {!!Object.keys(entry.details).length&&<pre>{JSON.stringify(entry.details,null,2)}</pre>}</li>)}</ol></details>}
-    {!context.readOnly&&<div className="inline">{!finished(job.status)&&<Button variant="outline" disabled={busy} onClick={()=>command("cancel")}>Cancel job</Button>}
+    {!!job.result?.steps?.length&&<details className="details" open={approval!=null}>
+      <summary>Workflow plan</summary><ol>{job.result.steps.map((step,index)=><li key={index}>{step.prompt}
+        {step.require_approval||step.external?" · approval required":""}</li>)}</ol></details>}
+    {approvalStep&&<p role="status">Step {(approval??0)+1} needs approval. {approvalStep.prompt}
+      {approvalStep.external&&" Approval allows this step to send its request to the configured provider."}</p>}
+    {!context.readOnly&&<div className="inline">{approval!=null&&<Button disabled={busy} onClick={()=>command(`approve/${approval}`)}>Approve step</Button>}
+      {!finished(job.status)&&<Button variant="outline" disabled={busy} onClick={()=>command("cancel")}>Cancel job</Button>}
       {["failed","canceled"].includes(job.status)&&<Button variant="outline" disabled={busy} onClick={()=>command("retry")}>Retry job</Button>}</div>}
     {job.result&&<ResultView result={job.result} context={context}/>}
     {job.result?.chart&&!context.readOnly&&<form onSubmit={save} className="save-dashboard">
@@ -111,6 +129,8 @@ export function AnalysisStudio({context,section}: {context:Context;section:keyof
   const [error,setError]=useState<unknown>(null),[pending,setPending]=useState(false),[forecastMode,setForecastMode]=useState("forecast");
   const [chartType,setChartType]=useState("bar"),[aggregation,setAggregation]=useState("sum"),[features,setFeatures]=useState<string[]>([]);
   const [assignment,setAssignment]=useState<string[]>(project.roles),[followUp,setFollowUp]=useState("");
+  const [extraSteps,setExtraSteps]=useState<{prompt:string;require_approval:boolean}[]>([]);
+  const [claimSubject,setClaimSubject]=useState("");
   const version=selected||datasets[0]?.versions[0]?.id||"";
   const columns=getVersion(datasets,version)?.profile.columns??[];
   const research=section==="research";
@@ -125,7 +145,10 @@ export function AnalysisStudio({context,section}: {context:Context;section:keyof
     const payload={prompt:label.trim(),mode,roles:section==="chat"?assignment:undefined,version_id:research?null:version,
       approve_external:external,date:String(data.date??""),value:String(data.value??""),horizon:Number(data.horizon??6),
       classification:data.classification==="classification",features:mode==="model"?features:[],
-      chart:mode==="chart"?{type:chartType,x:data.x,y:data.y??"",aggregation}:null,previous_job_id:section==="chat"&&followUp?followUp:null};
+      chart:mode==="chart"?{type:chartType,x:data.x,y:data.y??"",aggregation}:null,previous_job_id:section==="chat"&&followUp?followUp:null,
+      plan_from_prompt:section==="chat"&&!extraSteps.length&&data.plan_from_prompt==="on",
+      steps:section==="chat"&&extraSteps.length?[{prompt:label.trim(),approve_external:external},...extraSteps]:[],
+      claims:research&&claimSubject.trim()?[{subject:claimSubject.trim(),percent:String(data.percent)}]:[]};
     try {
       const job=await api<Job>(base+"/analyses",json("POST",payload));
       cache.setQueryData(["job",project.id,job.id],job);
@@ -149,6 +172,23 @@ export function AnalysisStudio({context,section}: {context:Context;section:keyof
           setAssignment(event.target.checked?[...assignment,role.id]:assignment.filter(id=>id!==role.id))}/>{role.name}</label>)}</div></fieldset>
         {!!earlier.some(j=>j.status==="completed")&&<label>Follow up on<select value={followUp} onChange={e=>setFollowUp(e.target.value)}>
           <option value="">New analysis</option>{earlier.filter(j=>j.status==="completed").map(j=><option key={j.id} value={j.id}>{j.prompt}</option>)}</select></label>}</>}
+      {section==="chat"&&<fieldset className="stack"><legend>Workflow steps</legend>
+        {!extraSteps.length&&<label className="checkbox"><input type="checkbox" name="plan_from_prompt"/>
+          Plan requests separated by “then” and review before execution</label>}
+        {extraSteps.map((step,i)=><div className="stack" key={i}>
+          <label>Step {i+2} request<input value={step.prompt} minLength={3} maxLength={2000} required
+            onChange={event=>setExtraSteps(extraSteps.map((entry,index)=>index===i?{...entry,prompt:event.target.value}:entry))}/></label>
+          <div className="inline"><label className="checkbox"><input type="checkbox" checked={step.require_approval}
+            onChange={event=>setExtraSteps(extraSteps.map((entry,index)=>index===i?{...entry,require_approval:event.target.checked}:entry))}/> Require approval</label>
+            <Button type="button" variant="outline" onClick={()=>setExtraSteps(extraSteps.filter((_,index)=>index!==i))}>Remove step</Button></div>
+        </div>)}
+        <div><Button type="button" variant="outline" disabled={extraSteps.length>=5}
+          onClick={()=>setExtraSteps([...extraSteps,{prompt:"",require_approval:false}])}>Add analysis step</Button></div></fieldset>}
+      {research&&<div className="form-grid">
+        <label>Claim subject (optional)<input value={claimSubject} minLength={5} maxLength={180}
+          onChange={event=>setClaimSubject(event.target.value)} placeholder="e.g. North region 2025 adoption"/></label>
+        <label>Claim percentage<input type="number" min={-1000000} max={1000000} step="any" name="percent"
+          disabled={!claimSubject.trim()} required={!!claimSubject.trim()}/></label></div>}
       {(research || (section==="chat"&&config.llm!=="none"))&&<label className="checkbox"><input type="checkbox" checked={external}
         onChange={e=>setExternal(e.target.checked)} required={research}/>{research?"Send this research query to Brave Search":
           `Allow sending this request and column names/types to ${config.llm}`}</label>}
@@ -186,6 +226,18 @@ export function Dashboards({context}: {context:Context}) {
   const saved=useQuery({queryKey:["dashboards",project.id],queryFn:()=>api<Dashboard[]>(base+"/dashboards")});
   const jobs=useJobs(context), candidates=jobs.data?.filter(job=>job.has_chart)??[];
   const [chosen,setChosen]=useState<string[]>([]),[error,setError]=useState<unknown>(null),[busy,setBusy]=useState(false);
+  const [shareLinks,setShareLinks]=useState<Record<string,string>>({});
+  const cache=useQueryClient();
+  async function share(id:string, enabled:boolean) {
+    setBusy(true);setError(null);
+    try {
+      const path=`${base}/dashboards/${id}/share`;
+      const response=enabled ? await api<{path:string}>(path,json("POST",{confirmed:true})) :
+        await api<void>(path,{method:"DELETE"});
+      setShareLinks(previous=>({...previous,[id]:response?window.location.origin+response.path:""}));
+      await cache.invalidateQueries({queryKey:["dashboards",project.id]});
+    } catch(problem){setError(problem);} finally{setBusy(false);}
+  }
   async function build(event:FormEvent<HTMLFormElement>) {
     event.preventDefault();setError(null);setBusy(true);
     const form=event.currentTarget;
@@ -207,10 +259,19 @@ export function Dashboards({context}: {context:Context}) {
       <Button asChild variant="outline"><Link href={base+"/visualize"}>Build a visualization <ArrowRight size={15}/></Link></Button></Empty>}
     {saved.data?.map(view=><section className="panel stack" key={view.id} id={view.id}>
       <div className="spread"><h2>{view.title}</h2><div className="inline"><Link className="text-link" href={`${base}/dashboards#${view.id}`}>Dashboard link</Link>
-        <Button asChild variant="outline"><a href={`/api${base}/dashboards/${view.id}/export`}><Download size={15}/> Export CSV</a></Button>
+        <Button asChild><a href={`/api${base}/dashboards/${view.id}/export?format=png`}><Download size={15}/> Download PNG</a></Button>
+        <Button asChild variant="outline"><a href={`/api${base}/dashboards/${view.id}/export`}>Export CSV</a></Button>
         <Button asChild variant="outline"><a href={`/api${base}/dashboards/${view.id}/export?format=plotly`}>Plotly JSON</a></Button></div></div>
-      {"panels" in view.chart ? <div className="two-columns">{view.chart.panels.map((chart,index)=><div className="stack" key={index}>
-        <h3>{chart.title}</h3><ChartView chart={chart} filter/></div>)}</div>:<ChartView chart={view.chart} filter/>}</section>)}
+      <DashboardCharts chart={view.chart}/>
+      {!readOnly&&<details className="details"><summary>Public sharing</summary>
+        <p>Anyone with the link can read this dashboard and the data shown in its charts. Creating a link revokes the previous link.</p>
+        <div className="inline">
+          <Button variant="outline" disabled={busy} onClick={()=>share(view.id,true)}>{view.shared?"Replace public link":"Create public link"}</Button>
+          {view.shared&&<Button variant="outline" disabled={busy} onClick={()=>share(view.id,false)}>Revoke public link</Button>}
+        </div>
+        {view.shared&&shareLinks[view.id]&&<label>Read-only link<input readOnly value={shareLinks[view.id]} onFocus={event=>event.target.select()}/></label>}
+        <ErrorNote error={error}/>
+      </details>}</section>)}
   </>;
 }
 

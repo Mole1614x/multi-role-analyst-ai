@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 
 import duckdb
 import numpy as np
@@ -43,7 +44,7 @@ def test_data_file_formats(extension, tmp_path):
     dataset = pd.DataFrame({"region": ["North", "South"], "revenue": [10, 20]})
     file = tmp_path / f"data{extension}"
     if extension == ".sqlite":
-        with sqlite3.connect(file) as connection:
+        with closing(sqlite3.connect(file)) as connection:
             dataset.to_sql("sales", connection, index=False)
     elif extension == ".duckdb":
         with duckdb.connect(str(file)) as connection:

@@ -1,16 +1,19 @@
 import json
 from datetime import timedelta
+from hashlib import sha256
+from secrets import token_urlsafe
 from time import monotonic, sleep
-from typing import Literal
+from typing import Annotated, Literal
 
 import httpx
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Header, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 
 from app.agents import providers
-from app.agents.workflow import AnalysisInput
+from app.agents.plan import draft_steps
+from app.agents.workflow import AnalysisInput, AnalysisStep
 from app.analytics import charts, data, sql
 from app.api.common import job_for, version_for
 from app.core.config import settings
@@ -20,6 +23,7 @@ from app.db.session import SessionLocal
 from app.services import jobs, reports, storage
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["analysis"])
+public_router = APIRouter(prefix="/public", tags=["dashboards"])
 TERMINAL = {"completed", "failed", "canceled"}
 
 
@@ -41,6 +45,10 @@ class SaveDashboard(TitledResult):
     job_ids: list[str] = Field(default_factory=list, max_length=6)
 
 
+class ShareInput(BaseModel):
+    confirmed: Literal[True]
+
+
 class ReportInput(TitledResult):
     job_id: str = Field(max_length=36)
     format: Literal["pdf", "xlsx", "pptx", "csv", "md", "html"]
@@ -59,6 +67,7 @@ def job_data(job: Job, full=False) -> dict:
         "trace": job.trace,
         "error": job.error,
         "attempt": job.attempt,
+        "failure_code": job.failure_code,
         "created_at": job.created_at.isoformat() + "Z",
         "prompt": job.payload.get("prompt") or job.payload.get("title") or job.payload.get("filename"),
         "result": job.result if full else None,
@@ -90,17 +99,11 @@ def create_job(db, project, user, kind, payload):
     return job_data(job, True)
 
 
-def check_analysis(db, project: Project, body: AnalysisInput):
+def check_step(db, project: Project, body: AnalysisStep):
     if not body.roles:
         body.roles = project.roles
     if len(set(body.roles)) != len(body.roles) or not set(body.roles) <= set(project.roles):
         raise HTTPException(422, "Select distinct roles assigned to this project.")
-    if body.previous_job_id:
-        prior = job_for(db, project.id, body.previous_job_id)
-        if prior.status != "completed" or prior.kind != "analysis":
-            raise HTTPException(422, "Select a completed analysis for context.")
-        if not body.version_id and prior.result.get("source"):
-            body.version_id = prior.result["source"]["version_id"]
     if body.mode == "research":
         if not settings().research_api_key:
             raise HTTPException(503, "External research currently has no configured provider.")
@@ -121,11 +124,39 @@ def check_analysis(db, project: Project, body: AnalysisInput):
         body.mode = "forecast"
 
 
+def check_analysis(db, project: Project, body: AnalysisInput):
+    if body.previous_job_id:
+        prior = job_for(db, project.id, body.previous_job_id)
+        if prior.status != "completed" or prior.kind != "analysis":
+            raise HTTPException(422, "Select a completed analysis for context.")
+        if not body.version_id and prior.result.get("source"):
+            body.version_id = prior.result["source"]["version_id"]
+    if body.plan_from_prompt:
+        if body.steps or body.mode != "analysis":
+            raise HTTPException(422, "Choose prompt planning for an analysis without supplied steps.")
+        try:
+            body.steps = draft_steps(body.prompt, body.approve_external)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    if not body.steps:
+        check_step(db, project, body)
+        return
+    if len(body.steps) < 2:
+        raise HTTPException(422, "A workflow requires two to six ordered steps.")
+    for step in body.steps:
+        step.roles = step.roles or body.roles
+        if step.mode == "research":
+            step.approve_external = True
+        else:
+            step.version_id = step.version_id or body.version_id
+        check_step(db, project, step)
+
+
 @router.post("/analyses", status_code=202)
 def analyze(project_id: str, body: AnalysisInput, db: DB, user: Actor):
     project = project_for(db, user, project_id, write=True)
     check_analysis(db, project, body)
-    return create_job(db, project, user, "analysis", body.model_dump())
+    return create_job(db, project, user, "analysis", body.model_dump(mode="json"))
 
 
 @router.get("/jobs")
@@ -169,7 +200,7 @@ def stream(project_id: str, job_id: str, db: DB, user: Actor):
             if payload != last:
                 yield f"data: {payload}\n\n"
                 last = payload
-            if status in TERMINAL:
+            if status in TERMINAL or status == "awaiting_approval":
                 return
             sleep(0.7)
 
@@ -186,7 +217,7 @@ def cancel(project_id: str, job_id: str, db: DB, user: Actor):
     job_for(db, project_id, job_id)
     changed = db.execute(
         update(Job)
-        .where(Job.id == job_id, Job.status.in_(["queued", "running"]))
+        .where(Job.id == job_id, Job.status.in_(["queued", "running", "awaiting_approval"]))
         .values(status="canceled", error="Canceled in the workspace.")
     ).rowcount
     if not changed:
@@ -194,6 +225,29 @@ def cancel(project_id: str, job_id: str, db: DB, user: Actor):
     audit(db, user, project.workspace_id, "job.canceled", job_id)
     db.commit()
     return job_data(db.get(Job, job_id), True)
+
+
+@router.post("/jobs/{job_id}/approve/{step_index}")
+def approve_step(project_id: str, job_id: str, step_index: int, db: DB, user: Actor):
+    project = project_for(db, user, project_id, write=True)
+    reserve_job(db, project)
+    job = job_for(db, project_id, job_id)
+    if job.requested_by != user.id:
+        raise HTTPException(403, "Only the original requester can approve this workflow.")
+    if job.status != "awaiting_approval" or (job.result or {}).get("pending_approval") != step_index:
+        raise HTTPException(409, "This workflow step is no longer awaiting approval.")
+    changed = db.execute(
+        update(Job)
+        .where(Job.id == job_id, Job.status == "awaiting_approval", Job.attempt == job.attempt)
+        .values(status="queued", payload=jobs.job_payload(job.payload | {"_approved_step": step_index}))
+    ).rowcount
+    if not changed:
+        raise HTTPException(409, "This workflow step is no longer awaiting approval.")
+    audit(db, user, project.workspace_id, "workflow.approved", job.id)
+    db.commit()
+    jobs.enqueue(job.id)
+    db.refresh(job)
+    return job_data(job, True)
 
 
 @router.post("/jobs/{job_id}/retry")
@@ -205,9 +259,26 @@ def retry(project_id: str, job_id: str, db: DB, user: Actor):
         raise HTTPException(409, "Only failed or canceled jobs can be retried.")
     if job.requested_by != user.id:
         raise HTTPException(403, "Only the original requester can retry this job.")
-    job.status, job.error, job.trace = "queued", None, []
-    job.checkpoint_epoch += 1
-    job.payload = jobs.job_payload(job.payload)
+    changed = db.execute(
+        update(Job)
+        .where(
+            Job.id == job_id,
+            Job.status == job.status,
+            Job.attempt == job.attempt,
+            Job.checkpoint_epoch == job.checkpoint_epoch,
+        )
+        .values(
+            status="queued",
+            error=None,
+            recovery_count=0,
+            failure_code=None,
+            trace=job.trace if job.payload.get("steps") else [],
+            checkpoint_epoch=job.checkpoint_epoch + 1,
+            payload=jobs.job_payload(job.payload),
+        )
+    ).rowcount
+    if not changed:
+        raise HTTPException(409, "This job has already changed state.")
     audit(db, user, project.workspace_id, "job.retried", job_id)
     db.commit()
     jobs.enqueue(job_id)
@@ -304,7 +375,69 @@ def download_result(project_id: str, query_id: str, db: DB, user: Actor):
 
 
 def dashboard_data(row: Dashboard) -> dict:
-    return {"id": row.id, "title": row.title, "job_id": row.job_id, "chart": row.chart}
+    return {
+        "id": row.id,
+        "title": row.title,
+        "job_id": row.job_id,
+        "chart": row.chart,
+        "shared": bool(row.share_digest),
+    }
+
+
+def dashboard_for(db, project_id, dashboard_id):
+    row = db.scalar(select(Dashboard).where(Dashboard.id == dashboard_id, Dashboard.project_id == project_id))
+    if row is None:
+        raise HTTPException(404, "Dashboard not found.")
+    return row
+
+
+def public_chart(chart):
+    if "panels" in chart:
+        return {"panels": [public_chart(panel) for panel in chart["panels"]]}
+    metadata = {
+        key: chart[key]
+        for key in ("type", "x", "y", "columns", "method", "truncated", "dimension")
+        if key in chart
+    }
+    fields = set(chart.get("columns") or ()) | {chart.get("x"), chart.get("y")}
+    if chart["type"] == "heatmap":
+        fields.add("column")
+    elif chart["type"] == "line":
+        fields.update(("lower", "upper"))
+    return metadata | {
+        "rows": [{key: value for key, value in row.items() if key in fields} for row in chart["rows"]]
+    }
+
+
+@public_router.get("/dashboard")
+def shared_dashboard(db: DB, authorization: Annotated[str, Header()] = ""):
+    token = authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
+    if len(token) != 43 or not token.isascii():
+        raise HTTPException(404, "Dashboard link is unavailable.")
+    row = db.scalar(select(Dashboard).where(Dashboard.share_digest == sha256(token.encode()).hexdigest()))
+    if row is None:
+        raise HTTPException(404, "Dashboard link is unavailable.")
+    return {"title": row.title, "chart": public_chart(row.chart)}
+
+
+@router.post("/dashboards/{dashboard_id}/share", status_code=201)
+def share_dashboard(project_id: str, dashboard_id: str, body: ShareInput, db: DB, user: Actor):
+    project = project_for(db, user, project_id, write=True)
+    record = dashboard_for(db, project_id, dashboard_id)
+    token = token_urlsafe(32)
+    record.share_digest = sha256(token.encode()).hexdigest()
+    audit(db, user, project.workspace_id, "dashboard.shared", record.id)
+    db.commit()
+    return {"path": "/shared/dashboard#" + token}
+
+
+@router.delete("/dashboards/{dashboard_id}/share", status_code=204)
+def revoke_dashboard(project_id: str, dashboard_id: str, db: DB, user: Actor):
+    project = project_for(db, user, project_id, write=True)
+    record = dashboard_for(db, project_id, dashboard_id)
+    db.execute(update(Dashboard).where(Dashboard.id == record.id).values(share_digest=None))
+    audit(db, user, project.workspace_id, "dashboard.unshared", record.id)
+    db.commit()
 
 
 @router.get("/dashboards")
@@ -344,14 +477,16 @@ def save_dashboard(project_id: str, body: SaveDashboard, db: DB, user: Actor):
 
 @router.get("/dashboards/{dashboard_id}/export")
 def export_dashboard(
-    project_id: str, dashboard_id: str, db: DB, user: Actor, format: Literal["csv", "plotly"] = "csv"
+    project_id: str, dashboard_id: str, db: DB, user: Actor, format: Literal["csv", "plotly", "png"] = "csv"
 ):
     project_for(db, user, project_id)
-    record = db.scalar(
-        select(Dashboard).where(Dashboard.id == dashboard_id, Dashboard.project_id == project_id)
-    )
-    if not record:
-        raise HTTPException(404, "Dashboard not found.")
+    record = dashboard_for(db, project_id, dashboard_id)
+    if format == "png":
+        return Response(
+            reports.dashboard_png(record.title, record.chart),
+            media_type="image/png",
+            headers={"Content-Disposition": 'attachment; filename="dashboard.png"'},
+        )
     if format == "plotly":
         panels = record.chart.get("panels", [record.chart])
         export = {"title": record.title, "figures": [charts.plotly_document(panel) for panel in panels]}
@@ -439,11 +574,13 @@ def add_schedule(project_id: str, body: ScheduleInput, db: DB, user: Actor):
         raise HTTPException(503, "Scheduling requires the Redis worker and scheduler.")
     if not body.approved or body.approve_external or body.mode == "research":
         raise HTTPException(422, "Approve recurring local analysis before scheduling.")
+    if body.steps or body.plan_from_prompt:
+        raise HTTPException(422, "Analyst schedules accept a single analysis.")
     check_analysis(db, project, body)
     row = Schedule(
         project_id=project_id,
         user_id=user.id,
-        payload=body.model_dump(exclude={"interval_minutes", "approved"}),
+        payload=body.model_dump(mode="json", exclude={"interval_minutes", "approved"}),
         interval_minutes=body.interval_minutes,
         next_at=now() + timedelta(minutes=body.interval_minutes),
     )

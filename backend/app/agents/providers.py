@@ -1,11 +1,11 @@
 import json
 from datetime import UTC
-from urllib.parse import urlsplit
 
 import httpx
 from pydantic import BaseModel, Field
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
+from app.agents.evidence import source_url
 from app.core.config import settings
 from app.core.observability import tokens
 
@@ -106,8 +106,9 @@ def research(query: str) -> list[dict]:
     retrieved = datetime.now(UTC).isoformat()
     for result in response.json().get("web", {}).get("results", [])[:8]:
         url = result.get("url", "")
-        parsed = urlsplit(url)
-        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        try:
+            parsed = source_url(url)
+        except ValueError:
             continue
         host = parsed.hostname
         if host.endswith((".gov", ".gov.uk")) or host in {"data.worldbank.org", "oecd.org", "www.oecd.org"}:

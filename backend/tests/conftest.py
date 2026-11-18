@@ -30,8 +30,11 @@ def migrated_database():
     from alembic.config import Config
 
     from alembic import command
+    from app.db.session import engine
 
     command.upgrade(Config("alembic.ini"), "head")
+    yield
+    engine.dispose()
 
 
 @pytest.fixture

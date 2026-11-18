@@ -6,10 +6,10 @@ from typing import Literal, TypedDict
 import pandas as pd
 from langgraph.graph import END, START, StateGraph
 from langsmith import tracing_context
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.agents import providers
-from app.analytics import charts, roles, sql
+from app.agents import evidence, providers
+from app.analytics import charts, roles, specialists, sql
 from app.analytics.data import load
 from app.analytics.tools import TOOLS
 from app.core.config import settings
@@ -17,7 +17,9 @@ from app.db.checkpoints import checkpointer
 from app.db.models import Version
 
 
-class AnalysisInput(BaseModel):
+class AnalysisStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     prompt: str = Field(min_length=3, max_length=2000)
     version_id: str | None = Field(default=None, max_length=36)
     roles: list[str] = Field(default_factory=list, max_length=12)
@@ -29,6 +31,18 @@ class AnalysisInput(BaseModel):
     classification: bool = False
     features: list[str] = Field(default_factory=list, max_length=15)
     chart: charts.ChartSpec | None = None
+    claims: list[evidence.ResearchClaim] = Field(default_factory=list, max_length=5)
+
+
+class PlannedStep(AnalysisStep):
+    require_approval: bool = False
+
+
+class AnalysisInput(AnalysisStep):
+    # Existing persisted job payloads contain queue metadata.
+    model_config = ConfigDict(extra="ignore")
+    plan_from_prompt: bool = False
+    steps: list[PlannedStep] = Field(default_factory=list, max_length=6)
     previous_job_id: str | None = Field(default=None, max_length=36)
 
 
@@ -48,7 +62,7 @@ class JobCancelled(Exception):
 
 def run(
     job_id: str,
-    request: AnalysisInput,
+    request: AnalysisStep,
     version: Version | None,
     progress: Callable[[str, dict], None],
     previous: dict | None = None,
@@ -128,9 +142,14 @@ def run(
         step("Statistical analysis")
         role_ids = ["hr"] if privacy_hr else request.roles
         with ThreadPoolExecutor(max_workers=min(3, max(1, len(role_ids)))) as pool:
-            metrics = list(
-                pool.map(lambda role: roles.calculate(role, frame, profile, request.prompt), role_ids)
+            groups = pool.map(
+                lambda role: (
+                    specialists.calculate(role, frame, request.prompt)
+                    or [roles.calculate(role, frame, profile, request.prompt)]
+                ),
+                role_ids,
             )
+            metrics = [finding for group in groups for finding in group]
         response = {"role_findings": metrics}
         if not privacy_hr:
             response["profile"] = profile
@@ -147,11 +166,14 @@ def run(
             step("Research", provider="Brave Search")
             if not request.approve_external:
                 raise ValueError("Approve sending the research query to the provider.")
-            evidence = providers.research(request.prompt)
+            sources = providers.research(request.prompt)
+            step("Source retrieval", candidates=len(sources))
+            sources, claims = evidence.verify(sources, request.claims)
             return {
-                "result": {"evidence": evidence},
+                "result": {"evidence": sources, "claim_checks": claims},
                 "limitations": [
-                    "Search excerpts are candidate evidence. Open the cited documents to check context and conflicting claims."
+                    "Claim checks apply to explicit percentages near the supplied subject phrase in readable sources.",
+                    "Review citations for scope, date, units and publisher independence before relying on a claim.",
                 ],
             }
         if privacy_hr:
@@ -274,7 +296,7 @@ def run(
             "limitations": state["limitations"],
             "method": state["method"],
             "validated": True,
-            "parameters": request.model_dump(exclude={"approve_external"}),
+            "parameters": request.model_dump(mode="json", exclude={"approve_external"}),
         }
         json.dumps(final, allow_nan=False)
         return {"result": final}

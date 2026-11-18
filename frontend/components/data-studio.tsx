@@ -31,6 +31,11 @@ export function DataStudio({context}: {context:Context}) {
   const version=selected||(completed ? importJob.data?.result?.version_id : "")||datasets[0]?.versions[0]?.id||"";
   const detail=useQuery({queryKey:["version",project.id,version],queryFn:()=>api<Version&{rows:Row[]}>(base+"/versions/"+version),enabled:!!version});
   const connectors=useQuery({queryKey:["connectors",project.id],queryFn:()=>api<{name:string;type:string}[]>(base+"/connectors")});
+  const [selectedConnector,setSelectedConnector]=useState("");
+  const configured=connectors.data??[];
+  const connectorIndex=selectedConnector||"0";
+  const source=configured[Number(connectorIndex)];
+  const needsTable=source?.type==="postgresql"||source?.type==="mysql";
   async function upload(event:FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form=event.currentTarget, payload=new FormData(form);
@@ -63,17 +68,20 @@ export function DataStudio({context}: {context:Context}) {
   async function connect(event:FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true);setError(null);setMessage("");setJobId("");
     try {
-      const dataset=await api<Dataset>(base+"/connectors",json("POST",Object.fromEntries(new FormData(event.currentTarget))));
-      setSelected(dataset.versions[0].id);setMessage("Source table imported.");
+      const table=String(new FormData(event.currentTarget).get("table")??"");
+      const dataset=await api<Dataset>(base+"/connectors",json("POST",{source:source?.name,type:source?.type,table}));
+      setSelected(dataset.versions[0].id);setMessage("Source imported.");
       await cache.invalidateQueries({queryKey:["datasets",project.id]});
     } catch(problem){setError(problem);} finally{setBusy(false);}
   }
   return <><Heading title="Datasets" description="Import source data and inspect profiles, rows, and version history."/>
     {!readOnly&&<section className="panel stack"><div className="spread"><h2><Upload size={19}/> Import a dataset</h2>
-      {!!connectors.data?.length&&<Button variant="outline" onClick={()=>setConnector(!connector)}>{connector?"Upload file":"Import from PostgreSQL"}</Button>}</div>
+      {!!connectors.data?.length&&<Button variant="outline" onClick={()=>setConnector(!connector)}>{connector?"Upload file":"Import from connector"}</Button>}</div>
       {connector ? <form className="stack" onSubmit={connect}><div className="form-grid"><label>Configured source
-        <select name="source" required>{connectors.data?.map(c=><option key={c.name}>{c.name}</option>)}</select></label>
-        <label>Table<input name="table" required placeholder="public.table_name"/></label></div><div><Button disabled={busy||processing}>Import table</Button></div></form>
+        <select value={connectorIndex} onChange={event=>setSelectedConnector(event.target.value)} required>
+          {configured.map((c,index)=><option key={c.type+c.name} value={String(index)}>{c.name} · {c.type.replaceAll("_"," ")}</option>)}</select></label>
+        {needsTable&&<label>Table<input name="table" required maxLength={140} placeholder="table_name"/></label>}</div>
+        <div><Button disabled={!source||busy||processing}>Import source</Button></div></form>
         :<form className="stack" onSubmit={upload}><div className="form-grid"><label>Data file<input type="file" name="file" required
           accept=".csv,.xlsx,.json,.parquet,.sqlite,.sqlite3,.db,.duckdb"/></label>
           <label>Table or worksheet (optional)<input name="table" maxLength={120}/></label></div>

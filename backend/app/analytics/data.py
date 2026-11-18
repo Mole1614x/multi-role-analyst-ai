@@ -2,6 +2,7 @@ import hashlib
 import json
 import re
 import sqlite3
+from contextlib import closing
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -108,7 +109,7 @@ def from_database(data: bytes, extension: str, table: str | None) -> pd.DataFram
                 ]
                 selected = select_table(names, table)
                 return connection.execute(f"SELECT * FROM main.{quote(selected)} LIMIT {limit}").fetchdf()
-        with sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True) as connection:
+        with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)) as connection:
             connection.execute("PRAGMA trusted_schema=OFF")
             names = [
                 row[1]

@@ -1,12 +1,13 @@
 from contextlib import contextmanager
 from datetime import timedelta
-from time import sleep
+from time import monotonic, sleep
 from uuid import uuid4
 
 from billiard.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import OperationalError
 
+from app.agents.plan import run_plan
 from app.agents.workflow import AnalysisInput, JobCancelled, run
 from app.analytics import data
 from app.core.config import settings
@@ -29,6 +30,8 @@ from app.services import reports, storage
 from app.services.local_tasks import LocalExecutor
 
 _executor: LocalExecutor | None = None
+RECOVERY_LIMIT = 3
+RECOVERY_ERROR = "The worker could not finish this job after three recoverable failures."
 LOCAL_INTERRUPTED = "The development server stopped before this job finished. Retry the job."
 
 
@@ -134,32 +137,54 @@ def execute_job(job_id: str):
         job = db.get(Job, job_id)
         steps = list(job.trace)
 
-        def progress(label, details):
-            steps.append({"step": label, "details": details, "at": now().isoformat() + "Z"})
+        deadline = monotonic() + settings().job_timeout - 4
+
+        def authorize(request=None):
+            roles = db.execute(
+                select(Membership.role, Project.roles)
+                .join(Project, Project.workspace_id == Membership.workspace_id)
+                .where(Project.id == job.project_id, Membership.user_id == job.requested_by)
+            ).first()
+            if roles is None or roles[0] == "viewer" or (request and not set(request.roles) <= set(roles[1])):
+                raise ValueError(
+                    "The workspace permission or project role required for this step has been removed."
+                )
+
+        def checkpoint(**values):
             changed = db.execute(
                 update(Job)
                 .where(Job.id == job_id, Job.status == "running", Job.attempt == attempt)
-                .values(trace=list(steps))
+                .values(**values)
                 .execution_options(synchronize_session=False)
             ).rowcount
             db.commit()
             if not changed:
                 raise JobCancelled()
 
+        def progress(label, details, request=None):
+            if monotonic() > deadline:
+                raise ValueError("The workflow exceeded its time budget.")
+            authorize(request)
+            steps.append({"step": label, "details": details, "at": now().isoformat() + "Z"})
+            checkpoint(trace=list(steps))
+
         object_key = None
         try:
-            project = db.get(Project, job.project_id)
-            member = db.scalar(
-                select(Membership).where(
-                    Membership.workspace_id == project.workspace_id, Membership.user_id == job.requested_by
-                )
-            )
-            if member is None or member.role == "viewer":
-                raise ValueError("Workspace write access has been removed.")
+            authorize()
             if job.kind == "analysis":
                 request = AnalysisInput.model_validate(job.payload)
-                version = db.get(Version, request.version_id) if request.version_id else None
-                previous = db.get(Job, request.previous_job_id) if request.previous_job_id else None
+                previous = (
+                    db.scalar(
+                        select(Job).where(
+                            Job.id == request.previous_job_id,
+                            Job.project_id == job.project_id,
+                            Job.kind == "analysis",
+                            Job.status == "completed",
+                        )
+                    )
+                    if request.previous_job_id
+                    else None
+                )
                 context = (
                     {
                         "id": previous.id,
@@ -169,7 +194,48 @@ def execute_job(job_id: str):
                     if previous
                     else None
                 )
-                result = run(f"{job_id}:{job.checkpoint_epoch}", request, version, progress, context)
+
+                def execute_step(index, step, prior=None):
+                    authorize(step)
+                    version = (
+                        db.scalar(
+                            select(Version)
+                            .join(Dataset)
+                            .where(Version.id == step.version_id, Dataset.project_id == job.project_id)
+                        )
+                        if step.version_id
+                        else None
+                    )
+                    if step.version_id and version is None:
+                        raise ValueError("The dataset version is no longer available in this project.")
+                    step_context = (
+                        {"id": job_id, "summary": prior["summary"], "objective": prior["plan"]["objective"]}
+                        if prior
+                        else context
+                    )
+                    return run(
+                        f"{job_id}:{job.checkpoint_epoch}" + (f":{index}" if request.steps else ""),
+                        step,
+                        version,
+                        lambda label, details: progress(
+                            label, details | ({"workflow_step": index} if request.steps else {}), step
+                        ),
+                        step_context,
+                    )
+
+                if request.steps:
+                    result = run_plan(
+                        request.steps,
+                        (job.result or {}) | {"objective": request.prompt},
+                        job.payload.get("_approved_step"),
+                        execute_step,
+                        lambda state: checkpoint(result=state),
+                    )
+                    if result["pending_approval"] is not None:
+                        checkpoint(status="awaiting_approval", recovery_count=0)
+                        return
+                else:
+                    result = execute_step(0, request)
             elif job.kind == "report":
                 progress("Report generation", {"format": job.payload["format"]})
                 source = db.get(Job, job.payload["analysis_id"])
@@ -199,7 +265,7 @@ def execute_job(job_id: str):
             changed = db.execute(
                 update(Job)
                 .where(Job.id == job_id, Job.status == "running", Job.attempt == attempt)
-                .values(status="completed", result=result)
+                .values(status="completed", result=result, recovery_count=0, failure_code=None)
                 .execution_options(synchronize_session=False)
             ).rowcount
             if not changed:
@@ -214,13 +280,24 @@ def execute_job(job_id: str):
             db.rollback()
             if object_key:
                 storage.remove(object_key)
-            db.execute(
+            recovery_count = job.recovery_count + 1
+            exhausted = recovery_count >= RECOVERY_LIMIT
+            changed = db.execute(
                 update(Job)
                 .where(Job.id == job_id, Job.status == "running", Job.attempt == attempt)
-                .values(status="queued")
-            )
+                .values(
+                    status="failed" if exhausted else "queued",
+                    recovery_count=recovery_count,
+                    failure_code="retry_exhausted" if exhausted else None,
+                    error=RECOVERY_ERROR if exhausted else None,
+                )
+            ).rowcount
             db.commit()
-            raise
+            if changed and exhausted:
+                jobs.labels(job.kind, "failed").inc()
+                log("job_retry_exhausted", job_id=job_id)
+            if changed and not exhausted:
+                raise
         except Exception as exc:  # noqa: BLE001
             db.rollback()
             if object_key:
@@ -255,13 +332,18 @@ def dispatch_due():
         db.execute(delete(ResetToken).where(ResetToken.expires_at < current))
         db.execute(
             update(Job)
-            .where(Job.status == "running", Job.started_at < cutoff, Job.attempt >= 3)
-            .values(status="failed", error="The worker could not finish this job after three attempts.")
+            .where(Job.status == "running", Job.started_at < cutoff, Job.recovery_count >= RECOVERY_LIMIT - 1)
+            .values(
+                status="failed",
+                error=RECOVERY_ERROR,
+                failure_code="retry_exhausted",
+                recovery_count=Job.recovery_count + 1,
+            )
         )
         db.execute(
             update(Job)
-            .where(Job.status == "running", Job.started_at < cutoff, Job.attempt < 3)
-            .values(status="queued")
+            .where(Job.status == "running", Job.started_at < cutoff, Job.recovery_count < RECOVERY_LIMIT - 1)
+            .values(status="queued", recovery_count=Job.recovery_count + 1)
         )
         schedules = db.scalars(
             select(Schedule)

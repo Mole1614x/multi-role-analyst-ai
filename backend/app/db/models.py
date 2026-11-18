@@ -90,6 +90,8 @@ class Job(Record, Base):
     error: Mapped[str | None] = mapped_column(Text)
     attempt: Mapped[int] = mapped_column(default=0)
     checkpoint_epoch: Mapped[int] = mapped_column(default=0, server_default="0")
+    recovery_count: Mapped[int] = mapped_column(default=0, server_default="0")
+    failure_code: Mapped[str | None] = mapped_column(String(32))
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
@@ -108,6 +110,7 @@ class Dashboard(Record, Base):
     job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"))
     title: Mapped[str] = mapped_column(String(100))
     chart: Mapped[dict] = mapped_column(JSON)
+    share_digest: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
 
 
 class Artifact(Record, Base):

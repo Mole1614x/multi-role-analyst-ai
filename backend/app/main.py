@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.api import analysis, auth, datasets, projects
 from app.core.config import settings
 from app.core.observability import latency, log, requests
+from app.core.queue_metrics import queue_metrics
 from app.db.session import check_db
 from app.services import jobs as job_service
 
@@ -30,7 +31,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
-for api in (auth.router, projects.router, datasets.router, analysis.router):
+for api in (auth.router, projects.router, datasets.router, analysis.router, analysis.public_router):
     app.include_router(api, prefix="/api")
 
 
@@ -116,4 +117,4 @@ def docs():
 
 @app.get("/metrics", include_in_schema=False)
 def metrics():
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    return Response(generate_latest() + queue_metrics(), media_type=CONTENT_TYPE_LATEST)

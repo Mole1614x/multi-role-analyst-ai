@@ -1,4 +1,5 @@
 from io import BytesIO
+from struct import unpack
 from uuid import uuid4
 
 import pytest
@@ -125,7 +126,15 @@ def test_ingestion_cleaning_sql_and_multi_role_workflow(client):
     )
     assert dashboard.status_code == 201, dashboard.text
     assert client.get(base + "/dashboards").json()[0]["title"] == "Regional revenue"
-    assert b"North" in client.get(base + f"/dashboards/{dashboard.json()['id']}/export").content
+    export = base + f"/dashboards/{dashboard.json()['id']}/export"
+    assert b"North" in client.get(export).content
+    image = client.get(export + "?format=png")
+    assert image.status_code == 200
+    assert image.headers["content-type"] == "image/png"
+    assert image.headers["content-disposition"] == 'attachment; filename="dashboard.png"'
+    assert image.content.startswith(b"\x89PNG\r\n\x1a\n")
+    width, height = unpack(">II", image.content[16:24])
+    assert width > 700 and height > 300
     assert client.get(base + "/jobs").json()[0]["status"] == "completed"
     follow_up = post_analysis(
         client, base, None, prompt="Show the average instead", previous_job_id=analysis["id"]
@@ -140,8 +149,14 @@ def test_ingestion_cleaning_sql_and_multi_role_workflow(client):
     assert len(combined.json()["chart"]["panels"]) == 2
     content = client.get(base + f"/dashboards/{combined.json()['id']}/export").content
     assert b"Data: avg_revenue" in content
-    plotly = client.get(base + f"/dashboards/{combined.json()['id']}/export?format=plotly").json()
+    combined_export = base + f"/dashboards/{combined.json()['id']}/export"
+    plotly = client.get(combined_export + "?format=plotly").json()
     assert plotly["figures"][1]["data"][0]["y"] == [75, 70]
+    combined_image = client.get(combined_export + "?format=png")
+    assert combined_image.status_code == 200
+    assert combined_image.content.startswith(b"\x89PNG\r\n\x1a\n")
+    combined_width, combined_height = unpack(">II", combined_image.content[16:24])
+    assert combined_width == width and abs(2 * height - combined_height) < 2
 
 
 @pytest.mark.parametrize("format_name", ["pdf", "xlsx", "pptx", "md", "html", "csv"])
@@ -200,3 +215,214 @@ def test_import_errors_research_disabled_and_job_retry(client):
     retry = client.post(base + f"/jobs/{fail['id']}/retry").json()
     assert retry["attempt"] == 2 and retry["status"] == "failed"
     assert client.post(base + f"/jobs/{fail['id']}/cancel").status_code == 409
+
+
+def test_workflow_checkpoint_approval_cancel_and_retry(client):
+    _, _, workspace = account(client)
+    base = project(client, workspace)
+    version = upload(client, base)
+    submitted = client.post(
+        base + "/analyses",
+        json={
+            "prompt": "Investigate regional revenue",
+            "version_id": version,
+            "steps": [
+                {"prompt": "Total revenue by region"},
+                {"prompt": "Show the average instead", "require_approval": True},
+                {
+                    "prompt": "Chart by region",
+                    "mode": "chart",
+                    "require_approval": True,
+                    "chart": {"type": "bar", "x": "region", "y": "revenue", "aggregation": "sum"},
+                },
+            ],
+        },
+    )
+    assert submitted.status_code == 202, submitted.text
+    job = submitted.json()
+    assert job["status"] == "awaiting_approval", job
+    result = job["result"]
+    assert result["pending_approval"] == 1
+    assert len(result["completed_steps"]) == 1
+    url = base + "/jobs/" + job["id"]
+    assert client.get(url).json()["result"] == result
+    assert client.post(url + "/approve/0").status_code == 409
+    assert client.post(url + "/cancel").json()["status"] == "canceled"
+    assert client.post(url + "/retry").json()["result"] == result
+    second = client.post(url + "/approve/1").json()
+    assert second["status"] == "awaiting_approval", second
+    assert second["result"]["pending_approval"] == 2
+    assert second["result"]["completed_steps"][:1] == result["completed_steps"]
+    assert client.post(url + "/approve/1").status_code == 409
+    final = client.post(url + "/approve/2").json()
+    assert final["status"] == "completed", final
+    assert len(final["result"]["completed_steps"]) == 3
+    assert final["result"]["plan"]["objective"] == "Investigate regional revenue"
+    assert final["result"]["chart"]["rows"][0]["group"] == "North"
+
+
+def test_workflow_rejects_cross_project_version_and_unassigned_roles(client):
+    _, _, workspace = account(client)
+    base = project(client, workspace)
+    other = project(client, workspace)
+    version = upload(client, base)
+    outside = upload(client, other)
+    body = {
+        "prompt": "Test analysis plan",
+        "version_id": version,
+        "steps": [
+            {"prompt": "Summarize revenue"},
+            {"prompt": "Analyze outliers", "version_id": outside},
+        ],
+    }
+    assert client.post(base + "/analyses", json=body).status_code == 404
+    body["steps"][1] = {"prompt": "Analyze turnover", "roles": ["hr"]}
+    assert client.post(base + "/analyses", json=body).status_code == 422
+
+
+def test_dashboard_links_are_opt_in_scoped_read_only_and_revocable(client):
+    email, _, workspace = account(client)
+    base = project(client, workspace)
+    version = upload(client, base)
+    analysis = post_analysis(client, base, version)
+    dash = client.post(base + "/dashboards", json={"title": "Shared sales", "job_id": analysis["id"]}).json()
+    private = client.post(
+        base + "/dashboards", json={"title": "Private sales", "job_id": analysis["id"]}
+    ).json()
+    share = base + f"/dashboards/{dash['id']}/share"
+    public = "/api/public/dashboard"
+    assert not dash["shared"] and not private["shared"]
+    assert client.get(public).status_code == 404
+    assert client.post(share, json={"confirmed": False}).status_code == 422
+    first_link = client.post(share, json={"confirmed": True}).json()["path"]
+    current_link = client.post(share, json={"confirmed": True}).json()["path"]
+    first = {"Authorization": "Bearer " + first_link.split("#")[1]}
+    current = {"Authorization": "Bearer " + current_link.split("#")[1]}
+    assert client.get(public, headers=first).status_code == 404
+    client.post("/api/auth/logout")
+    response = client.get(public, headers=current)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    visible = response.json()
+    assert set(visible) == {"title", "chart"} and visible["title"] == "Shared sales"
+    assert set(visible["chart"]["rows"][0]) == {"region", "sum_revenue"}
+    assert "source" not in visible["chart"] and "title" not in visible["chart"]
+    assert client.post(public, headers=current, json={"title": "Changed"}).status_code == 405
+    assert client.get(base + "/dashboards", headers=current).status_code == 401
+    export = base + f"/dashboards/{dash['id']}/export?format=png"
+    assert client.get(export, headers=current).status_code == 401
+    _, _, other_workspace = account(client)
+    other = project(client, other_workspace)
+    assert client.get(export).status_code == 404
+    assert client.delete(other + f"/dashboards/{dash['id']}/share").status_code == 404
+    assert client.post("/api/auth/login", json={"email": email, "password": PASSWORD}).status_code == 200
+    assert client.delete(share).status_code == 204
+    assert client.get(public, headers=current).status_code == 404
+
+
+def test_connector_scope_and_common_import_pipeline(client, monkeypatch):
+    import httpx
+    import respx
+
+    from app.core.config import RestSource, SheetSource, settings
+
+    _, owner, workspace = account(client)
+    base = project(client, workspace)
+    monkeypatch.setattr(
+        settings(),
+        "google_sheets_sources",
+        {
+            "budget": SheetSource(spreadsheet_id="test_sheet", range="Sales!A1:B3"),
+        },
+    )
+    monkeypatch.setattr(settings(), "google_sheets_api_key", "mock-test-key")
+    monkeypatch.setattr(
+        settings(),
+        "rest_sources",
+        {
+            "sales": RestSource(url="https://connector.example/sales", records_key="records"),
+        },
+    )
+    request = {"type": "rest", "source": "sales"}
+    assert client.get(base + "/connectors").json() == []
+    assert client.post(base + "/connectors", json=request).status_code == 403
+    monkeypatch.setattr(settings(), "admin_user_ids", [owner])
+    assert client.get(base + "/connectors").json() == [
+        {"name": "budget", "type": "google_sheets"},
+        {"name": "sales", "type": "rest"},
+    ]
+    with respx.mock:
+        rest = respx.get("https://connector.example/sales").respond(
+            json={
+                "records": [
+                    {"region": "West", "revenue": 15},
+                    {"region": "East", "revenue": 30},
+                ]
+            }
+        )
+        sheet = respx.get(
+            url__regex=r"https://sheets\.googleapis\.com/v4/spreadsheets/test_sheet/values/.*"
+        ).respond(
+            json={"values": [["region", "revenue"], ["West", 15], ["East", 30]]},
+        )
+        for body in [request, {"type": "google_sheets", "source": "budget"}]:
+            response = client.post(base + "/connectors", json=body)
+            assert response.status_code == 201, response.text
+            version = response.json()["versions"][0]
+            assert version["profile"]["rows"] == 2 and version["number"] == 1
+            assert client.get(base + "/versions/" + version["id"]).json()["rows"][0]["revenue"] == 15
+        assert rest.called and sheet.calls[0].request.headers["X-Goog-Api-Key"] == "mock-test-key"
+        rest.mock(return_value=httpx.Response(302, headers={"Location": "https://elsewhere.example/"}))
+        assert client.post(base + "/connectors", json=request).status_code == 422
+
+
+def test_research_job_records_per_claim_evidence(client, monkeypatch):
+    from app.agents import evidence, providers
+    from app.core.config import settings
+
+    _, _, workspace = account(client)
+    base = project(client, workspace)
+    source = {"url": "https://reports.example/a", "title": "Adoption report"}
+    monkeypatch.setattr(settings(), "research_api_key", "synthetic-key")
+    monkeypatch.setattr(providers, "research", lambda query: [source])
+    monkeypatch.setattr(evidence, "read_source", lambda url: (url, "Regional adoption 2025 was 25%."))
+    response = client.post(
+        base + "/analyses",
+        json={
+            "prompt": "Regional adoption 2025",
+            "mode": "research",
+            "approve_external": True,
+            "claims": [{"subject": "Regional adoption 2025", "percent": 25}],
+        },
+    )
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["status"] == "completed", body
+    check = body["result"]["claim_checks"][0]
+    assert check["status"] == "supported"
+    assert check["citations"][0]["url"] == source["url"]
+
+
+def test_draft_workflow_uses_explicit_sequence_without_model_provider(client):
+    _, _, workspace = account(client)
+    base = project(client, workspace)
+    version = upload(client, base)
+    response = client.post(
+        base + "/analyses",
+        json={
+            "prompt": "Total revenue by region and then average revenue by region",
+            "version_id": version,
+            "plan_from_prompt": True,
+        },
+    )
+    assert response.status_code == 202, response.text
+    job = response.json()
+    assert job["status"] == "awaiting_approval"
+    assert job["result"]["pending_approval"] == 0 and job["result"]["completed_steps"] == []
+    assert [step["prompt"] for step in job["result"]["steps"]] == [
+        "Total revenue by region",
+        "average revenue by region",
+    ]
+    approved = client.post(base + "/jobs/" + job["id"] + "/approve/0").json()
+    assert approved["status"] == "completed", approved
+    assert len(approved["result"]["completed_steps"]) == 2
