@@ -1,6 +1,6 @@
 # Development setup
 
-Use Python 3.12, uv, and Node.js 24. The backend package declares Python 3.11 through 3.13 support. CI uses 3.12. On macOS, install the tools with Homebrew. On Linux, use your distribution or the official installers and verify `uv --version`, `python3 --version`, and `node --version`.
+Use Python 3.12, uv, and Node.js 24 for this SQLite workflow. On macOS Monterey, use Node.js 22 LTS. The backend package declares Python 3.11 through 3.13 support. CI uses 3.12. On macOS, install the tools with Homebrew. On Linux, use your distribution or the official installers and verify `uv --version`, `python3 --version`, and `node --version`.
 
 ## API
 
@@ -9,11 +9,12 @@ From the repository root, open a terminal and run
 ```bash
 cd backend
 uv sync --locked
+export ANALYST_DATABASE_URL=sqlite:///./analyst.sqlite3 ANALYST_EAGER=true
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --no-proxy-headers
 ```
 
-The local database and the volume containing Parquet files and reports are created inside `backend/`. This mode runs Celery tasks eagerly. Use Compose for worker concurrency, restart recovery, recurring jobs, and production-style database migrations.
+The local database and the volume containing Parquet files and reports are created inside `backend/`. This mode runs Celery tasks eagerly. For worker concurrency and recurring jobs, use the [native PostgreSQL and Redis setup](LOCAL_DEVELOPMENT_WITHOUT_DOCKER.md) or Docker Compose.
 
 ## Web application
 

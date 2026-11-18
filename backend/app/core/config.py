@@ -1,16 +1,47 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL, make_url
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+DEFAULT_BACKEND_URL = "http://127.0.0.1:8000"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="ANALYST_", env_file=".env", extra="ignore")
-    database_url: str = "sqlite:///./analyst.sqlite3"
-    redis_url: str = ""
-    eager: bool = True
-    origin: str = "http://localhost:3000"
+    model_config = SettingsConfigDict(
+        env_prefix="ANALYST_",
+        env_file=(BACKEND_DIR.parent / ".env", BACKEND_DIR / ".env"),
+        env_ignore_empty=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+
+    app_env: str = Field(default="development", validation_alias="APP_ENV")
+    database_url: str = Field(
+        default="sqlite:///./analyst.sqlite3",
+        validation_alias=AliasChoices("ANALYST_DATABASE_URL", "DATABASE_URL"),
+    )
+    postgres_host: str = Field(default="127.0.0.1", validation_alias="POSTGRES_HOST")
+    postgres_port: int = Field(default=5432, ge=1, le=65535, validation_alias="POSTGRES_PORT")
+    postgres_db: str = Field(default="analyst", validation_alias="POSTGRES_DB")
+    postgres_user: str = Field(default="analyst", validation_alias="POSTGRES_USER")
+    postgres_password: str = Field(default="", validation_alias="POSTGRES_PASSWORD", repr=False)
+    redis_url: str = Field(default="", validation_alias=AliasChoices("ANALYST_REDIS_URL", "REDIS_URL"))
+    celery_broker_url: str = Field(
+        default="", validation_alias=AliasChoices("ANALYST_CELERY_BROKER_URL", "CELERY_BROKER_URL")
+    )
+    celery_result_backend: str = Field(
+        default="", validation_alias=AliasChoices("ANALYST_CELERY_RESULT_BACKEND", "CELERY_RESULT_BACKEND")
+    )
+    eager: bool | None = None
+    origin: str = Field(
+        default="http://localhost:3000", validation_alias=AliasChoices("ANALYST_ORIGIN", "FRONTEND_URL")
+    )
+    backend_url: str = Field(default=DEFAULT_BACKEND_URL, validation_alias="BACKEND_URL")
     cookie_secure: bool = False
     storage_dir: Path = Path("storage")
     s3_bucket: str = ""
@@ -37,6 +68,47 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     postgres_sources: dict[str, str] = {}
     admin_user_ids: list[str] = []
+
+    @field_validator("backend_url", "origin")
+    @classmethod
+    def http_origin(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Use an HTTP or HTTPS origin with an optional port.")
+        _ = parsed.port  # Validate the port before startup.
+        return value.rstrip("/")
+
+    @model_validator(mode="after")
+    def local_services(self) -> "Settings":
+        if "database_url" not in self.model_fields_set and self.postgres_password:
+            url = URL.create(
+                "postgresql+psycopg",
+                username=self.postgres_user,
+                password=self.postgres_password,
+                host=self.postgres_host,
+                port=self.postgres_port,
+                database=self.postgres_db,
+            )
+        else:
+            url = make_url(self.database_url)
+            if url.drivername in {"postgres", "postgresql"}:
+                url = url.set(drivername="postgresql+psycopg")
+        self.database_url = url.render_as_string(hide_password=False)
+        if self.eager is None:
+            self.eager = not bool(self.broker_url)
+        return self
+
+    @property
+    def broker_url(self) -> str:
+        return self.celery_broker_url or self.redis_url
 
 
 @lru_cache

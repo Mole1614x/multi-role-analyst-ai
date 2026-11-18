@@ -2,18 +2,31 @@
 
 Analyst Workspace is a multi-role analytics application. It imports versioned datasets, runs checked DuckDB queries and specialist calculations, and saves charts, dashboards, and reports with the underlying evidence. The core workflow runs locally without a model API key.
 
-## Run with Docker
+## Option A — Run with Docker
 
 Install Docker Engine and the Compose plugin, or Docker Desktop on macOS.
 
 ```bash
-cp .env.example .env
-chmod 600 .env
-python3 -c 'from pathlib import Path; from secrets import token_hex; p=Path(".env"); p.write_text(p.read_text().replace("POSTGRES_PASSWORD=\n", "POSTGRES_PASSWORD="+token_hex(24)+"\n"))'
+if [ ! -e .env ]; then (umask 077; cp .env.example .env); fi
+```
+
+Set `POSTGRES_PASSWORD` in `.env` to a unique URL-safe password. Then start the stack.
+
+```bash
 docker compose up --build --wait
 ```
 
 Open [Analyst Workspace](http://localhost:3000), register an account, and create a project. The API is also available on loopback at [FastAPI documentation](http://localhost:8000/api/docs). Compose applies the database migrations before starting Uvicorn, the Celery worker, and the recurring scheduler.
+
+## Option B — Run without Docker
+
+Install Python, Node.js, PostgreSQL, and Redis locally. Use Node.js 22 LTS on macOS Monterey. The native setup creates a Python virtual environment under `backend/.venv`.
+
+```bash
+./scripts/setup-local-macos.sh
+```
+
+Create the local database, configure `.env`, and run migrations. Start FastAPI, the worker, Beat, and Next.js in separate terminals using the commands in the [native development guide](docs/LOCAL_DEVELOPMENT_WITHOUT_DOCKER.md).
 
 ## Try an analysis
 
