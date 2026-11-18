@@ -383,3 +383,28 @@ def test_research_job_records_per_claim_evidence(client, monkeypatch):
     check = body["result"]["claim_checks"][0]
     assert check["status"] == "supported"
     assert check["citations"][0]["url"] == source["url"]
+
+
+def test_draft_workflow_uses_explicit_sequence_without_model_provider(client):
+    _, _, workspace = account(client)
+    base = project(client, workspace)
+    version = upload(client, base)
+    response = client.post(
+        base + "/analyses",
+        json={
+            "prompt": "Total revenue by region and then average revenue by region",
+            "version_id": version,
+            "plan_from_prompt": True,
+        },
+    )
+    assert response.status_code == 202, response.text
+    job = response.json()
+    assert job["status"] == "awaiting_approval"
+    assert job["result"]["pending_approval"] == 0 and job["result"]["completed_steps"] == []
+    assert [step["prompt"] for step in job["result"]["steps"]] == [
+        "Total revenue by region",
+        "average revenue by region",
+    ]
+    approved = client.post(base + "/jobs/" + job["id"] + "/approve/0").json()
+    assert approved["status"] == "completed", approved
+    assert len(approved["result"]["completed_steps"]) == 2

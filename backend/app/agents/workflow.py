@@ -41,6 +41,7 @@ class PlannedStep(AnalysisStep):
 class AnalysisInput(AnalysisStep):
     # Existing persisted job payloads contain queue metadata.
     model_config = ConfigDict(extra="ignore")
+    plan_from_prompt: bool = False
     steps: list[PlannedStep] = Field(default_factory=list, max_length=6)
     previous_job_id: str | None = Field(default=None, max_length=36)
 

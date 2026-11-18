@@ -105,6 +105,9 @@ function JobView({context,id}: {context:Context;id:string}) {
     {!!job.trace.length&&<details className="details"><summary>Execution trace ({job.trace.length} steps)</summary>
       <ol className="trace">{job.trace.map((entry,i)=><li key={i}><strong>{entry.step}</strong> <small>{new Date(entry.at).toLocaleTimeString()}</small>
         {!!Object.keys(entry.details).length&&<pre>{JSON.stringify(entry.details,null,2)}</pre>}</li>)}</ol></details>}
+    {!!job.result?.steps?.length&&<details className="details" open={approval!=null}>
+      <summary>Workflow plan</summary><ol>{job.result.steps.map((step,index)=><li key={index}>{step.prompt}
+        {step.require_approval||step.external?" · approval required":""}</li>)}</ol></details>}
     {approvalStep&&<p role="status">Step {(approval??0)+1} needs approval. {approvalStep.prompt}
       {approvalStep.external&&" Approval allows this step to send its request to the configured provider."}</p>}
     {!context.readOnly&&<div className="inline">{approval!=null&&<Button disabled={busy} onClick={()=>command(`approve/${approval}`)}>Approve step</Button>}
@@ -143,6 +146,7 @@ export function AnalysisStudio({context,section}: {context:Context;section:keyof
       approve_external:external,date:String(data.date??""),value:String(data.value??""),horizon:Number(data.horizon??6),
       classification:data.classification==="classification",features:mode==="model"?features:[],
       chart:mode==="chart"?{type:chartType,x:data.x,y:data.y??"",aggregation}:null,previous_job_id:section==="chat"&&followUp?followUp:null,
+      plan_from_prompt:section==="chat"&&!extraSteps.length&&data.plan_from_prompt==="on",
       steps:section==="chat"&&extraSteps.length?[{prompt:label.trim(),approve_external:external},...extraSteps]:[],
       claims:research&&claimSubject.trim()?[{subject:claimSubject.trim(),percent:String(data.percent)}]:[]};
     try {
@@ -169,6 +173,8 @@ export function AnalysisStudio({context,section}: {context:Context;section:keyof
         {!!earlier.some(j=>j.status==="completed")&&<label>Follow up on<select value={followUp} onChange={e=>setFollowUp(e.target.value)}>
           <option value="">New analysis</option>{earlier.filter(j=>j.status==="completed").map(j=><option key={j.id} value={j.id}>{j.prompt}</option>)}</select></label>}</>}
       {section==="chat"&&<fieldset className="stack"><legend>Workflow steps</legend>
+        {!extraSteps.length&&<label className="checkbox"><input type="checkbox" name="plan_from_prompt"/>
+          Plan requests separated by “then” and review before execution</label>}
         {extraSteps.map((step,i)=><div className="stack" key={i}>
           <label>Step {i+2} request<input value={step.prompt} minLength={3} maxLength={2000} required
             onChange={event=>setExtraSteps(extraSteps.map((entry,index)=>index===i?{...entry,prompt:event.target.value}:entry))}/></label>

@@ -1,3 +1,4 @@
+import re
 from collections.abc import Callable
 from typing import TypedDict
 
@@ -11,6 +12,20 @@ class PlanState(TypedDict, total=False):
     steps: list[dict]
     completed_steps: list[dict]
     pending_approval: int | None
+
+
+def draft_steps(objective: str, approve_external: bool) -> list[PlannedStep]:
+    prompts = [
+        clause.strip(" ,.")
+        for clause in re.split(r"\s+(?:and\s+)?then\s+|\r?\n+", objective, flags=re.IGNORECASE)
+        if clause.strip(" ,.")
+    ]
+    if not 2 <= len(prompts) <= 6 or any(len(clause) < 3 for clause in prompts):
+        raise ValueError("Describe two to six analysis requests separated by ‘then’ or line breaks.")
+    return [
+        PlannedStep(prompt=prompt, approve_external=approve_external, require_approval=index == 0)
+        for index, prompt in enumerate(prompts)
+    ]
 
 
 def run_plan(
@@ -62,6 +77,9 @@ def run_plan(
         return state
     last = state["completed_steps"][-1]
     chart = next((entry["chart"] for entry in reversed(state["completed_steps"]) if "chart" in entry), None)
+    source = next(
+        (entry["source"] for entry in reversed(state["completed_steps"]) if entry.get("source")), None
+    )
     return (
         last
         | state
@@ -69,5 +87,6 @@ def run_plan(
             "summary": f"{len(plan)} workflow steps completed. {last['summary']}",
             "plan": last["plan"] | {"objective": saved.get("objective") or last["plan"]["objective"]},
             "chart": chart,
+            "source": source,
         }
     )

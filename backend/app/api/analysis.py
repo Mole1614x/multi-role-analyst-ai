@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 
 from app.agents import providers
+from app.agents.plan import draft_steps
 from app.agents.workflow import AnalysisInput, AnalysisStep
 from app.analytics import charts, data, sql
 from app.api.common import job_for, version_for
@@ -130,6 +131,13 @@ def check_analysis(db, project: Project, body: AnalysisInput):
             raise HTTPException(422, "Select a completed analysis for context.")
         if not body.version_id and prior.result.get("source"):
             body.version_id = prior.result["source"]["version_id"]
+    if body.plan_from_prompt:
+        if body.steps or body.mode != "analysis":
+            raise HTTPException(422, "Choose prompt planning for an analysis without supplied steps.")
+        try:
+            body.steps = draft_steps(body.prompt, body.approve_external)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     if not body.steps:
         check_step(db, project, body)
         return
@@ -560,7 +568,7 @@ def add_schedule(project_id: str, body: ScheduleInput, db: DB, user: Actor):
         raise HTTPException(503, "Scheduling requires the Redis worker and scheduler.")
     if not body.approved or body.approve_external or body.mode == "research":
         raise HTTPException(422, "Approve recurring local analysis before scheduling.")
-    if body.steps:
+    if body.steps or body.plan_from_prompt:
         raise HTTPException(422, "Analyst schedules accept a single analysis.")
     check_analysis(db, project, body)
     row = Schedule(
