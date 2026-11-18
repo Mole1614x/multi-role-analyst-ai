@@ -44,25 +44,67 @@ def output_csv(columns: list[str], rows: list[dict]) -> bytes:
     return output.getvalue().encode("utf-8-sig")
 
 
-def figure(chart: dict):
-    kind = chart.get("type")
-    if kind not in {"bar", "line", "pie", "histogram", "scatter", "heatmap"} or not chart.get("rows"):
-        return None
-    fig = Figure(figsize=(8, 3.2), layout="constrained")
-    axis = fig.subplots()
+def cell_preview(value, width: int) -> str:
+    label = " ".join(str(value).split()) if value is not None else "—"
+    return label if len(label) <= width else label[: width - 1] + "…"
+
+
+def draw_chart(axis, chart: dict, rows: list[dict]) -> bool:
+    if not rows:
+        return False
+    kind = chart["type"]
+    if kind == "table":
+        columns = chart["columns"]
+        if not columns:
+            return False
+        width = max(8, 100 // len(columns))
+        axis.set_axis_off()
+        table = axis.table(
+            cellText=[[cell_preview(row.get(column), width) for column in columns] for row in rows],
+            colLabels=[cell_preview(column, width) for column in columns],
+            cellLoc="left",
+            colLoc="left",
+            bbox=(0, 0.05, 1, 0.9),
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(9 if len(columns) < 7 else 7)
+        for (row_number, _column), cell in table.get_celld().items():
+            cell.get_text().set_parse_math(False)
+            cell.set_edgecolor("#dce4df")
+            if row_number == 0:
+                cell.set_facecolor("#e4f1e9")
+                cell.set_text_props(weight="bold")
+        return True
+    if kind == "kpi":
+        x, y = chart["x"], chart["y"]
+        label, value = rows[0].get(x), rows[0].get(y)
+        axis.set_axis_off()
+        axis.text(
+            0.5,
+            0.62,
+            str(value) if value is not None else "—",
+            ha="center",
+            fontsize=28,
+            weight="bold",
+            color="#167851",
+            parse_math=False,
+        )
+        axis.text(
+            0.5, 0.35, str(label) if label is not None else "", ha="center", fontsize=11, parse_math=False
+        )
+        return True
     if kind == "heatmap":
         columns = chart["columns"]
         matrix = [
-            [row[column] if row[column] is not None else float("nan") for column in columns]
-            for row in chart["rows"]
+            [row.get(column) if row.get(column) is not None else float("nan") for column in columns]
+            for row in rows
         ]
         heatmap = axis.imshow(matrix, vmin=-1, vmax=1, cmap="BrBG")
         axis.set_xticks(range(len(columns)), columns)
-        axis.set_yticks(range(len(columns)), columns)
-        fig.colorbar(heatmap, ax=axis, label="Pearson correlation")
+        axis.set_yticks(range(len(rows)), [str(row.get("column", "")) for row in rows])
+        axis.figure.colorbar(heatmap, ax=axis, label="Pearson correlation")
     else:
         x, y = chart["x"], chart["y"]
-        rows = chart["rows"][-60:] if kind == "line" else chart["rows"][:30]
         points = [
             row
             for row in rows
@@ -70,15 +112,15 @@ def figure(chart: dict):
             and (kind != "scatter" or isinstance(row.get(x), (int, float)))
         ]
         if not points:
-            return None
+            return False
         labels = [str(row.get(x))[:20] for row in points]
         values = [row[y] for row in points]
+        indices = range(len(points))
         if kind == "line":
-            indices = list(range(len(points)))
-            axis.plot(indices, values, color="#167851")
+            axis.plot(indices, values, color="#167851", marker="o" if len(points) == 1 else None)
             if any("lower" in row for row in points):
-                lower = [row.get("lower", float("nan")) for row in points]
-                upper = [row.get("upper", float("nan")) for row in points]
+                lower = [row["lower"] if row.get("lower") is not None else float("nan") for row in points]
+                upper = [row["upper"] if row.get("upper") is not None else float("nan") for row in points]
                 axis.fill_between(indices, lower, upper, color="#6b84bd", alpha=0.25)
             spacing = max(1, len(labels) // 8)
             axis.set_xticks(indices[::spacing], labels[::spacing])
@@ -89,16 +131,53 @@ def figure(chart: dict):
             axis.set_xlabel(x, parse_math=False)
             axis.set_ylabel(y, parse_math=False)
         else:
-            axis.bar(labels, values, color="#167851")
-    axis.set_title(chart["method"], parse_math=False)
+            axis.bar(indices, values, color="#167851")
+            axis.set_xticks(indices, labels)
     if kind != "pie":
         axis.tick_params(axis="x", labelrotation=60, labelsize=7)
         for label in axis.get_xticklabels() + axis.get_yticklabels():
             label.set_parse_math(False)
-    image = BytesIO()
-    FigureCanvasAgg(fig).print_png(image)
-    image.seek(0)
-    return fig, image
+    return True
+
+
+def png_image(fig: Figure) -> BytesIO:
+    output = BytesIO()
+    FigureCanvasAgg(fig).print_png(output)
+    output.seek(0)
+    return output
+
+
+def figure(chart: dict):
+    kind = chart.get("type")
+    if kind not in {"bar", "line", "pie", "histogram", "scatter", "heatmap"} or not chart.get("rows"):
+        return None
+    rows = chart["rows"][-60:] if kind == "line" else chart["rows"][:30]
+    fig = Figure(figsize=(8, 3.2), layout="constrained")
+    axis = fig.subplots()
+    if not draw_chart(axis, chart, rows):
+        return None
+    axis.set_title(chart["method"], parse_math=False)
+    return fig, png_image(fig)
+
+
+def dashboard_png(title: str, chart: dict) -> bytes:
+    panels = chart.get("panels", [chart])
+    fig = Figure(figsize=(10, 3.8 * len(panels)), dpi=120, layout="constrained", facecolor="white")
+    fig.suptitle("\n".join(wrap(title, 70)), fontsize=16, weight="bold", parse_math=False)
+    for axis, panel in zip(fig.subplots(len(panels), 1, squeeze=False)[:, 0], panels, strict=True):
+        rows = panel["rows"]
+        table_preview = panel["type"] == "table" and len(rows) > 12
+        panel_title = panel.get("title") or panel["method"]
+        if table_preview:
+            panel_title += f" (first 12 of {len(rows)} rows)"
+        axis.set_title("\n".join(wrap(panel_title, 85)), fontsize=11, parse_math=False)
+        if not draw_chart(axis, panel, rows[:12] if table_preview else rows):
+            axis.set_axis_off()
+            axis.text(0.5, 0.5, "No data to plot", ha="center", va="center", parse_math=False)
+        elif panel["type"] in {"bar", "line", "histogram"}:
+            axis.set_xlabel(panel.get("dimension") or panel["x"], parse_math=False)
+            axis.set_ylabel(panel["y"], parse_math=False)
+    return png_image(fig).getvalue()
 
 
 def generate(format_name: str, title: str, result: dict) -> bytes:

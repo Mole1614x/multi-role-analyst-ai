@@ -1,4 +1,5 @@
 from io import BytesIO
+from struct import unpack
 from uuid import uuid4
 
 import pytest
@@ -125,7 +126,15 @@ def test_ingestion_cleaning_sql_and_multi_role_workflow(client):
     )
     assert dashboard.status_code == 201, dashboard.text
     assert client.get(base + "/dashboards").json()[0]["title"] == "Regional revenue"
-    assert b"North" in client.get(base + f"/dashboards/{dashboard.json()['id']}/export").content
+    export = base + f"/dashboards/{dashboard.json()['id']}/export"
+    assert b"North" in client.get(export).content
+    image = client.get(export + "?format=png")
+    assert image.status_code == 200
+    assert image.headers["content-type"] == "image/png"
+    assert image.headers["content-disposition"] == 'attachment; filename="dashboard.png"'
+    assert image.content.startswith(b"\x89PNG\r\n\x1a\n")
+    width, height = unpack(">II", image.content[16:24])
+    assert width > 700 and height > 300
     assert client.get(base + "/jobs").json()[0]["status"] == "completed"
     follow_up = post_analysis(
         client, base, None, prompt="Show the average instead", previous_job_id=analysis["id"]
@@ -140,8 +149,14 @@ def test_ingestion_cleaning_sql_and_multi_role_workflow(client):
     assert len(combined.json()["chart"]["panels"]) == 2
     content = client.get(base + f"/dashboards/{combined.json()['id']}/export").content
     assert b"Data: avg_revenue" in content
-    plotly = client.get(base + f"/dashboards/{combined.json()['id']}/export?format=plotly").json()
+    combined_export = base + f"/dashboards/{combined.json()['id']}/export"
+    plotly = client.get(combined_export + "?format=plotly").json()
     assert plotly["figures"][1]["data"][0]["y"] == [75, 70]
+    combined_image = client.get(combined_export + "?format=png")
+    assert combined_image.status_code == 200
+    assert combined_image.content.startswith(b"\x89PNG\r\n\x1a\n")
+    combined_width, combined_height = unpack(">II", combined_image.content[16:24])
+    assert combined_width == width and abs(2 * height - combined_height) < 2
 
 
 @pytest.mark.parametrize("format_name", ["pdf", "xlsx", "pptx", "md", "html", "csv"])
@@ -294,8 +309,11 @@ def test_dashboard_links_are_opt_in_scoped_read_only_and_revocable(client):
     assert "source" not in visible["chart"] and "title" not in visible["chart"]
     assert client.post(public, headers=current, json={"title": "Changed"}).status_code == 405
     assert client.get(base + "/dashboards", headers=current).status_code == 401
+    export = base + f"/dashboards/{dash['id']}/export?format=png"
+    assert client.get(export, headers=current).status_code == 401
     _, _, other_workspace = account(client)
     other = project(client, other_workspace)
+    assert client.get(export).status_code == 404
     assert client.delete(other + f"/dashboards/{dash['id']}/share").status_code == 404
     assert client.post("/api/auth/login", json={"email": email, "password": PASSWORD}).status_code == 200
     assert client.delete(share).status_code == 204

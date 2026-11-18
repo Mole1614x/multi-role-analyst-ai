@@ -36,7 +36,7 @@ date,region,revenue,expenses
 2. In **Datasets**, upload `sales-test.csv`. The profile should show **4 rows** and **1 duplicate**.
 3. In **Cleaning studio**, preview removing duplicates and save the result. Version 2 should have **3 rows**. Version 1 remains available.
 4. In **AI analysts**, select version 2 and run `Total revenue by region`. Expect **North = 150**, **South = 70**, **total revenue = 220**, and **profit = 90**.
-5. Save the chart as a dashboard. In **Dashboards**, filter for `South` and open **View chart data** to check the displayed result.
+5. Save the chart as a dashboard. In **Dashboards**, use **Download PNG** for an image of the saved chart. Filter for `South` and open **View chart data** to check the displayed result.
 6. In **Reports**, select the completed analysis and generate a CSV. Check that it contains the regional values `North,150` and `South,70`.
 
 ## Analyst roles
@@ -68,7 +68,7 @@ Analyses show unavailable findings when inputs are missing and surface assumptio
 | **AI analysts and SQL studio** | Run specialist calculations or draft and execute read-only DuckDB queries. SQL studio can query across two selected dataset versions and export results as CSV. |
 | **Forecasting & models** | Run a time-series forecast, evaluate a regression or classification model, or compare the means of two groups. Forecasts and model results include holdout evaluation. |
 | **Research** | Discover public sources through Brave Search with approval. Provide a claim subject and percentage to check readable passages for agreement, conflicting values, or insufficient evidence. Results include citations and retrieval dates. |
-| **Visualization builder and Dashboards** | Build charts and save single- or multi-chart dashboards. Apply a shared filter to charts with the same grouping field. Create and revoke read-only public links. Dashboard export supports CSV and Plotly JSON. |
+| **Visualization builder and Dashboards** | Build charts and save single- or multi-chart dashboards. Apply a shared filter to charts with the same grouping field. Create and revoke read-only public links. Download a PNG image of the saved dashboard, CSV data, or a Plotly JSON specification. |
 | **Reports** | Generate PDF, XLSX, PPTX, CSV, Markdown, or HTML from a completed analysis. |
 | **Analysis history and Execution & schedules** | Inspect job traces, reopen results, approve pending steps, cancel work, and retry failures. Recurring analyses use the Redis and Celery stack. |
 

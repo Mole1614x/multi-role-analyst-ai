@@ -62,6 +62,12 @@ test("register, run multi-role analysis, save dashboard, download report and reo
   await expect(page.getByText("Dashboard saved.")).toBeVisible();
   await workspaceLink(page,"Dashboards").click();
   await expect(page.getByRole("heading",{name:"Regional dashboard"})).toBeVisible();
+  const dashboardDownload = page.waitForEvent("download");
+  await page.getByRole("link",{name:"Download PNG"}).click();
+  const image = await dashboardDownload;
+  expect(image.suggestedFilename()).toBe("dashboard.png");
+  const png = await readFile((await image.path())!);
+  expect(png.subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
   await page.getByLabel("Filter groups").fill("South");
   await page.getByText("View chart data").click();
   await expect(page.getByRole("cell",{name:"70",exact:true})).toBeVisible();

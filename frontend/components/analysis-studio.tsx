@@ -259,7 +259,8 @@ export function Dashboards({context}: {context:Context}) {
       <Button asChild variant="outline"><Link href={base+"/visualize"}>Build a visualization <ArrowRight size={15}/></Link></Button></Empty>}
     {saved.data?.map(view=><section className="panel stack" key={view.id} id={view.id}>
       <div className="spread"><h2>{view.title}</h2><div className="inline"><Link className="text-link" href={`${base}/dashboards#${view.id}`}>Dashboard link</Link>
-        <Button asChild variant="outline"><a href={`/api${base}/dashboards/${view.id}/export`}><Download size={15}/> Export CSV</a></Button>
+        <Button asChild><a href={`/api${base}/dashboards/${view.id}/export?format=png`}><Download size={15}/> Download PNG</a></Button>
+        <Button asChild variant="outline"><a href={`/api${base}/dashboards/${view.id}/export`}>Export CSV</a></Button>
         <Button asChild variant="outline"><a href={`/api${base}/dashboards/${view.id}/export?format=plotly`}>Plotly JSON</a></Button></div></div>
       <DashboardCharts chart={view.chart}/>
       {!readOnly&&<details className="details"><summary>Public sharing</summary>

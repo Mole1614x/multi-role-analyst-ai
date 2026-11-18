@@ -477,10 +477,16 @@ def save_dashboard(project_id: str, body: SaveDashboard, db: DB, user: Actor):
 
 @router.get("/dashboards/{dashboard_id}/export")
 def export_dashboard(
-    project_id: str, dashboard_id: str, db: DB, user: Actor, format: Literal["csv", "plotly"] = "csv"
+    project_id: str, dashboard_id: str, db: DB, user: Actor, format: Literal["csv", "plotly", "png"] = "csv"
 ):
     project_for(db, user, project_id)
     record = dashboard_for(db, project_id, dashboard_id)
+    if format == "png":
+        return Response(
+            reports.dashboard_png(record.title, record.chart),
+            media_type="image/png",
+            headers={"Content-Disposition": 'attachment; filename="dashboard.png"'},
+        )
     if format == "plotly":
         panels = record.chart.get("panels", [record.chart])
         export = {"title": record.title, "figures": [charts.plotly_document(panel) for panel in panels]}
