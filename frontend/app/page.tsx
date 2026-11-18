@@ -20,7 +20,7 @@ export default function Landing() {
       <section className="landing-inner hero">
         <div className="hero-copy">
           <div className="eyebrow"><span className="status-dot"/> ANALYTICS WORKSPACE</div>
-          <h1>From raw data to<br/><em>decisions.</em></h1>
+          <h1>From raw data<br/>to <em>decisions.</em></h1>
           <p>Bring your data and specialist analysts into one workspace. Run analyses, inspect the evidence, and share results your team can trace back to the source.</p>
           <div className="inline hero-actions"><Button asChild><Link href="/register">Create a workspace <ArrowRight size={17}/></Link></Button>
             <Button asChild variant="outline"><a href="#workflow">See how it works</a></Button></div>
@@ -42,7 +42,7 @@ export default function Landing() {
         </div>
       </section>
       <section className="workflow-strip" id="workflow"><div className="landing-inner workflow-inner">
-        <div className="section-heading"><div className="eyebrow">THE WORKFLOW</div><h2>Analyze. Verify. Share.</h2></div>
+        <div className="section-heading"><h2>How it works</h2></div>
         <div className="workflow-grid">{workflow.map(([Icon,title,description])=><article key={title}><span className="icon-tile"><Icon size={21}/></span>
           <h3>{title}</h3><p>{description}</p></article>)}</div>
       </div></section>
