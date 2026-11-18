@@ -12,8 +12,8 @@ need_backend
 from app.core.config import settings
 
 config = settings()
-if not config.broker_url or config.eager:
-    raise SystemExit("Configure REDIS_URL or CELERY_BROKER_URL and enable background jobs (ANALYST_EAGER=false).")
+if not config.broker_url or config.task_backend != "celery":
+    raise SystemExit("Configure REDIS_URL or CELERY_BROKER_URL and select TASK_BACKEND=celery.")
 PY
 if [[ "$mode" == "beat" ]]; then
   storage="$("$VENV_PYTHON" -c 'from app.core.config import settings; print(settings().storage_dir)')"

@@ -8,6 +8,7 @@ import { api, json, type Dataset, type Profile, type Row, type SavedQuery, type 
 import { Empty, ErrorNote, getVersion, Heading, Table, VersionSelect } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import type { Context } from "@/components/project";
+import { finished, useActiveJob } from "@/lib/jobs";
 
 function ProfileView({profile}: {profile:Profile}) {
   return <>
@@ -23,13 +24,17 @@ export function DataStudio({context}: {context:Context}) {
   const cache=useQueryClient();
   const [selected,setSelected]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState<unknown>(null);
   const [busy,setBusy]=useState(false),[progress,setProgress]=useState(0),[connector,setConnector]=useState(false);
-  const version=selected||datasets[0]?.versions[0]?.id||"";
+  const [jobId,setJobId]=useState("");
+  const importJob=useActiveJob(context,jobId);
+  const processing=!!jobId&&!importJob.error&&!finished(importJob.data?.status??"queued");
+  const completed=importJob.data?.status==="completed";
+  const version=selected||(completed ? importJob.data?.result?.version_id : "")||datasets[0]?.versions[0]?.id||"";
   const detail=useQuery({queryKey:["version",project.id,version],queryFn:()=>api<Version&{rows:Row[]}>(base+"/versions/"+version),enabled:!!version});
   const connectors=useQuery({queryKey:["connectors",project.id],queryFn:()=>api<{name:string;type:string}[]>(base+"/connectors")});
   async function upload(event:FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form=event.currentTarget, payload=new FormData(form);
-    setError(null);setMessage("");setBusy(true);setProgress(0);
+    setError(null);setMessage("");setJobId("");setBusy(true);setProgress(0);
     try {
       const result=await new Promise<Dataset&{job_id?:string}>((resolve,reject)=>{
         const request=new XMLHttpRequest();
@@ -43,15 +48,20 @@ export function DataStudio({context}: {context:Context}) {
         request.ontimeout=()=>reject(new Error("Upload timed out."));
         request.send(payload);
       });
-      if (result.job_id) setMessage("Import queued. Follow its progress under Execution & schedules.");
-      else {setSelected(result.versions[0].id);setMessage("Dataset imported.");}
-      await cache.invalidateQueries({queryKey:["datasets",project.id]});
+      if (result.job_id) {
+        setSelected("");
+        setJobId(result.job_id);
+      } else {
+        setSelected(result.versions[0].id);
+        setMessage("Dataset imported.");
+        await cache.invalidateQueries({queryKey:["datasets",project.id]});
+      }
       form.reset();
     } catch(problem){setError(problem);}
     finally{setBusy(false);}
   }
   async function connect(event:FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true);setError(null);setMessage("");
+    event.preventDefault(); setBusy(true);setError(null);setMessage("");setJobId("");
     try {
       const dataset=await api<Dataset>(base+"/connectors",json("POST",Object.fromEntries(new FormData(event.currentTarget))));
       setSelected(dataset.versions[0].id);setMessage("Source table imported.");
@@ -63,13 +73,15 @@ export function DataStudio({context}: {context:Context}) {
       {!!connectors.data?.length&&<Button variant="outline" onClick={()=>setConnector(!connector)}>{connector?"Upload file":"Import from PostgreSQL"}</Button>}</div>
       {connector ? <form className="stack" onSubmit={connect}><div className="form-grid"><label>Configured source
         <select name="source" required>{connectors.data?.map(c=><option key={c.name}>{c.name}</option>)}</select></label>
-        <label>Table<input name="table" required placeholder="public.table_name"/></label></div><div><Button disabled={busy}>Import table</Button></div></form>
+        <label>Table<input name="table" required placeholder="public.table_name"/></label></div><div><Button disabled={busy||processing}>Import table</Button></div></form>
         :<form className="stack" onSubmit={upload}><div className="form-grid"><label>Data file<input type="file" name="file" required
           accept=".csv,.xlsx,.json,.parquet,.sqlite,.sqlite3,.db,.duckdb"/></label>
           <label>Table or worksheet (optional)<input name="table" maxLength={120}/></label></div>
           {busy&&<label>{progress===100?"Processing file":"Uploading file"}<progress aria-label="Upload progress" max={100} value={progress}/></label>}
-          <div><Button disabled={busy}><Upload size={16}/> {busy?"Importing…":"Import dataset"}</Button></div></form>}
-      <ErrorNote error={error}/>{message&&<p className="success" role="status">{message}</p>}
+          <div><Button disabled={busy||processing}><Upload size={16}/> {busy||processing?"Importing…":"Import dataset"}</Button></div></form>}
+      {processing&&<p className="muted" role="status">{importJob.data?.status==="running"?"Processing dataset…":"Dataset import queued…"}</p>}
+      <ErrorNote error={error??importJob.error??importJob.data?.error}/>
+      {(message||completed)&&<p className="success" role="status">{message||"Dataset imported."}</p>}
     </section>}
     {!datasets.length ? <Empty title="No datasets yet" description="Imported files will appear here with a schema and data preview."/> :
       <section className="panel stack"><div className="spread"><h2>Data explorer</h2>

@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from time import monotonic
 from uuid import uuid4
 
@@ -13,9 +14,21 @@ from app.api import analysis, auth, datasets, projects
 from app.core.config import settings
 from app.core.observability import latency, log, requests
 from app.db.session import check_db
+from app.services import jobs as job_service
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    with job_service.local_execution():
+        yield
+
 
 app = FastAPI(
-    title="Analyst Workspace API", version="0.1.0", docs_url="/api/docs", openapi_url="/api/openapi.json"
+    title="Analyst Workspace API",
+    version="0.1.0",
+    docs_url="/api/docs",
+    openapi_url="/api/openapi.json",
+    lifespan=lifespan,
 )
 for api in (auth.router, projects.router, datasets.router, analysis.router):
     app.include_router(api, prefix="/api")
@@ -81,10 +94,12 @@ def ready():
     try:
         check_db()
         config = settings()
-        if not config.eager and not config.broker_url:
+        if config.task_backend == "celery" and not config.broker_url:
             raise HTTPException(503, "A Redis broker is required for background jobs.")
-        redis_urls = [config.redis_url]
-        if not config.eager and config.broker_url.startswith(("redis://", "rediss://", "unix://")):
+        redis_urls = [] if config.task_backend == "local" else [config.redis_url]
+        if config.task_backend == "celery" and config.broker_url.startswith(
+            ("redis://", "rediss://", "unix://")
+        ):
             redis_urls.append(config.broker_url)
         for url in dict.fromkeys(filter(None, redis_urls)):
             with Redis.from_url(url, socket_connect_timeout=2, socket_timeout=2) as client:

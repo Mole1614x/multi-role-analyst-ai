@@ -80,7 +80,7 @@ def reserve_job(db, project: Project):
 def create_job(db, project, user, kind, payload):
     limiter(f"jobs:{user.id}", 40, 60)
     reserve_job(db, project)
-    job = Job(project_id=project.id, requested_by=user.id, kind=kind, payload=payload)
+    job = Job(project_id=project.id, requested_by=user.id, kind=kind, payload=jobs.job_payload(payload))
     db.add(job)
     db.flush()
     audit(db, user, project.workspace_id, f"{kind}.queued", job.id)
@@ -207,6 +207,7 @@ def retry(project_id: str, job_id: str, db: DB, user: Actor):
         raise HTTPException(403, "Only the original requester can retry this job.")
     job.status, job.error, job.trace = "queued", None, []
     job.checkpoint_epoch += 1
+    job.payload = jobs.job_payload(job.payload)
     audit(db, user, project.workspace_id, "job.retried", job_id)
     db.commit()
     jobs.enqueue(job_id)
@@ -434,7 +435,7 @@ def schedules(project_id: str, db: DB, user: Actor):
 @router.post("/schedules", status_code=201)
 def add_schedule(project_id: str, body: ScheduleInput, db: DB, user: Actor):
     project = project_for(db, user, project_id, write=True)
-    if settings().eager:
+    if settings().task_backend != "celery":
         raise HTTPException(503, "Scheduling requires the Redis worker and scheduler.")
     if not body.approved or body.approve_external or body.mode == "research":
         raise HTTPException(422, "Approve recurring local analysis before scheduling.")

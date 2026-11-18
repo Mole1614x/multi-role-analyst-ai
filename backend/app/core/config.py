@@ -1,4 +1,5 @@
 from functools import lru_cache
+from os import getenv
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -38,6 +39,9 @@ class Settings(BaseSettings):
         default="", validation_alias=AliasChoices("ANALYST_CELERY_RESULT_BACKEND", "CELERY_RESULT_BACKEND")
     )
     eager: bool | None = None
+    task_backend: Literal["local", "celery", "eager"] | None = Field(
+        default=None, validation_alias=AliasChoices("ANALYST_TASK_BACKEND", "TASK_BACKEND")
+    )
     origin: str = Field(
         default="http://localhost:3000", validation_alias=AliasChoices("ANALYST_ORIGIN", "FRONTEND_URL")
     )
@@ -102,8 +106,14 @@ class Settings(BaseSettings):
             if url.drivername in {"postgres", "postgresql"}:
                 url = url.set(drivername="postgresql+psycopg")
         self.database_url = url.render_as_string(hide_password=False)
-        if self.eager is None:
-            self.eager = not bool(self.broker_url)
+        if self.task_backend is None:
+            if self.eager is True:
+                self.task_backend = "eager"
+            elif self.broker_url or self.eager is False:
+                self.task_backend = "celery"
+            else:
+                self.task_backend = "local"
+        self.eager = self.task_backend == "eager"
         return self
 
     @property
@@ -113,4 +123,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def settings() -> Settings:
-    return Settings()
+    env_file = getenv("ANALYST_ENV_FILE")
+    return Settings(_env_file=env_file) if env_file else Settings()

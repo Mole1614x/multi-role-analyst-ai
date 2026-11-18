@@ -1,5 +1,21 @@
 # Deployment
 
+## Start with Docker Compose
+
+Install Docker Engine and Compose, or Docker Desktop. From the repository root, create a private `.env` if needed.
+
+```bash
+if [ ! -e .env ]; then (umask 077; cp .env.example .env); fi
+```
+
+Set `POSTGRES_PASSWORD` in `.env` to a unique URL-safe password, then start the stack.
+
+```bash
+docker compose up --build --wait
+```
+
+The web app listens on `http://localhost:3000` by default. The root npm launcher uses separate development settings in `.env.development.local`.
+
 The Compose files provide a reproducible single-host deployment. API and web ports bind to loopback. PostgreSQL and Redis remain inside the service network. Deployment startup runs `alembic upgrade head` once before the Uvicorn API starts.
 
 Set `ANALYST_ORIGIN` to the public HTTPS hostname and `ANALYST_COOKIE_SECURE=true` behind a TLS ingress. Forward requests to the web service and allow streaming without response buffering. Configure upload body and worker resource limits appropriate to the workload. Keep the API health and metrics ports private. Scrape `/metrics` on the API, and use Celery worker logs for worker execution visibility.

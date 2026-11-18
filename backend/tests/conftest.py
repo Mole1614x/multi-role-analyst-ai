@@ -9,6 +9,8 @@ from app.core.config import Settings
 
 sandbox = TemporaryDirectory(prefix="analyst-tests-")
 atexit.register(sandbox.cleanup)
+for key in ("ANALYST_ENV_FILE", "ANALYST_TASK_BACKEND", "TASK_BACKEND", "ANALYST_S3_BUCKET"):
+    os.environ.pop(key, None)
 os.environ["ANALYST_DATABASE_URL"] = f"sqlite:///{Path(sandbox.name) / 'test.sqlite3'}"
 os.environ["ANALYST_STORAGE_DIR"] = str(Path(sandbox.name) / "objects")
 os.environ["MPLCONFIGDIR"] = str(Path(sandbox.name) / "matplotlib")

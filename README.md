@@ -2,31 +2,23 @@
 
 Analyst Workspace is a multi-role analytics application. It imports versioned datasets, runs checked DuckDB queries and specialist calculations, and saves charts, dashboards, and reports with the underlying evidence. The core workflow runs locally without a model API key.
 
-## Option A — Run with Docker
+## Quick start
 
-Install Docker Engine and the Compose plugin, or Docker Desktop on macOS.
-
-```bash
-if [ ! -e .env ]; then (umask 077; cp .env.example .env); fi
-```
-
-Set `POSTGRES_PASSWORD` in `.env` to a unique URL-safe password. Then start the stack.
+Install Python 3.11 through 3.13 and Node.js 22.13 or newer. Use the latest Node.js 22 LTS release on macOS Monterey.
 
 ```bash
-docker compose up --build --wait
+git clone https://github.com/Mole1614x/multi-role-analyst-ai.git
+cd multi-role-analyst-ai
+npm install
+npm run setup
+npm run dev
 ```
 
-Open [Analyst Workspace](http://localhost:3000), register an account, and create a project. The API is also available on loopback at [FastAPI documentation](http://localhost:8000/api/docs). Compose applies the database migrations before starting Uvicorn, the Celery worker, and the recurring scheduler.
+Open [http://localhost:3000](http://localhost:3000) and create an account. FastAPI is available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs). Press Ctrl+C to stop both servers.
 
-## Option B — Run without Docker
+`npm install` runs setup automatically. Use `npm run setup` to recheck dependencies and apply migrations. Setup creates `backend/.venv` and an isolated `.env.development.local` when needed. Your SQLite database and files stay under `backend/data/`.
 
-Install Python, Node.js, PostgreSQL, and Redis locally. Use Node.js 22 LTS on macOS Monterey. The native setup creates a Python virtual environment under `backend/.venv`.
-
-```bash
-./scripts/setup-local-macos.sh
-```
-
-Create the local database, configure `.env`, and run migrations. Start FastAPI, the worker, Beat, and Next.js in separate terminals using the commands in the [native development guide](docs/LOCAL_DEVELOPMENT_WITHOUT_DOCKER.md).
+The default workspace uses SQLite and a bounded background worker. Docker, PostgreSQL, Redis, and Celery are optional for local development. Configure an OpenAI or Gemini API key in `.env.development.local` to enable AI-assisted planning. [Local development guide](docs/DEVELOPMENT_SETUP.md)
 
 ## Try an analysis
 
@@ -46,8 +38,8 @@ date,region,revenue,expenses
 
 ## Development and deployment
 
-- [Development setup](docs/DEVELOPMENT_SETUP.md) covers macOS, Linux, and a two-process setup using SQLite.
-- [Deployment](docs/DEPLOYMENT.md) covers configuration, migrations, storage, and recovery.
+- [Development setup](docs/DEVELOPMENT_SETUP.md) covers npm commands, local storage, and troubleshooting.
+- [Deployment](docs/DEPLOYMENT.md) covers Docker Compose, production services, and recovery. [Native services guide](docs/LOCAL_DEVELOPMENT_WITHOUT_DOCKER.md) covers running PostgreSQL, Redis, and Celery yourself.
 - [Architecture](docs/ARCHITECTURE.md), [agent orchestration](docs/AGENT_ARCHITECTURE.md), [analyst roles](docs/ANALYST_ROLES.md), and [database design](docs/DATABASE_DESIGN.md) describe the application.
 - [API documentation](docs/API_DOCUMENTATION.md) describes the resources, isolation model, and asynchronous jobs.
 - [Security](docs/SECURITY.md), [testing](docs/TESTING.md), and [troubleshooting](docs/TROUBLESHOOTING.md) describe verification and operational boundaries.

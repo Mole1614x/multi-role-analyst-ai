@@ -1,4 +1,6 @@
+from contextlib import contextmanager
 from datetime import timedelta
+from time import sleep
 from uuid import uuid4
 
 from billiard.exceptions import SoftTimeLimitExceeded
@@ -24,9 +26,69 @@ from app.db.models import (
 )
 from app.db.session import SessionLocal
 from app.services import reports, storage
+from app.services.local_tasks import LocalExecutor
+
+_executor: LocalExecutor | None = None
+LOCAL_INTERRUPTED = "The development server stopped before this job finished. Retry the job."
+
+
+def job_payload(payload: dict) -> dict:
+    return {**payload, "_runner": settings().task_backend}
+
+
+def fail_pending(message: str, job_id: str | None = None):
+    with SessionLocal() as db:
+        pending = update(Job).where(
+            Job.status.in_(["queued", "running"]), Job.payload["_runner"].as_string() == "local"
+        )
+        if job_id is not None:
+            pending = pending.where(Job.id == job_id)
+        db.execute(
+            pending.values(status="failed", error=message).execution_options(synchronize_session=False)
+        )
+        db.commit()
+
+
+@contextmanager
+def local_execution():
+    global _executor
+    if settings().task_backend != "local":
+        yield
+        return
+
+    fail_pending(LOCAL_INTERRUPTED)
+    _executor = LocalExecutor()
+    try:
+        yield
+    finally:
+        _executor.close()
+        _executor = None
+
+
+def run_local(job_id: str):
+    try:
+        for attempt in range(3):
+            try:
+                execute_job(job_id)
+                return
+            except OperationalError:
+                if attempt == 2:
+                    raise
+                sleep(0.15 * (attempt + 1))
+    except Exception as exc:  # noqa: BLE001
+        log("local_job_failed", job_id=job_id, error_type=type(exc).__name__)
+        fail_pending(
+            "The job could not be processed. Retry after checking the source or local database.", job_id
+        )
 
 
 def enqueue(job_id: str):
+    if settings().task_backend == "local":
+        executor = _executor
+        if executor is None or not executor.submit(run_local, job_id):
+            fail_pending("The development worker is unavailable or its queue is full. Retry shortly.", job_id)
+        return
+
     try:
         execute.delay(job_id)
     except Exception as exc:  # noqa: BLE001
@@ -49,6 +111,10 @@ def persist_dataset(db, project_id: str, name: str, source: str, frame):
 
 @celery.task(name="analyst.execute", autoretry_for=(OperationalError,), retry_backoff=True, max_retries=2)
 def execute(job_id: str):
+    execute_job(job_id)
+
+
+def execute_job(job_id: str):
     with SessionLocal() as db:
         claimed = db.execute(
             update(Job)

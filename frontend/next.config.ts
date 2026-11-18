@@ -4,8 +4,10 @@ const config: NextConfig = {
   agentRules: false,
   poweredByHeader: false,
   output: "standalone",
+  outputFileTracingRoot: __dirname,
+  turbopack: { root: __dirname },
   async rewrites() {
-    const api = (process.env.API_INTERNAL_URL || process.env.BACKEND_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+    const api = (process.env.API_INTERNAL_URL || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
     return [{ source: "/api/:path*", destination: `${api}/api/:path*` }];
   },
   async headers() {

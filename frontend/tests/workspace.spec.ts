@@ -50,6 +50,7 @@ test("register, run multi-role analysis, save dashboard, download report and reo
   await expect(page.getByRole("cell",{name:"150",exact:true})).toBeVisible();
 
   await workspaceLink(page,"AI analysts").click();
+  await expect(page.getByText(/AI-powered planning requires a configured/)).toBeVisible();
   await page.getByLabel("Analysis request").fill("Total revenue by region");
   await page.getByRole("button",{name:"Run analysis"}).click();
   await expect(page.getByText("3 role-specific metric groups computed.")).toBeVisible({timeout:30_000});

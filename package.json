@@ -1,0 +1,16 @@
+{
+  "name": "multi-role-analyst-ai-dev",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  },
+  "scripts": {
+    "postinstall": "node scripts/local-dev.mjs setup",
+    "setup": "node scripts/local-dev.mjs setup",
+    "dev": "node scripts/local-dev.mjs dev",
+    "test": "node scripts/local-dev.mjs test",
+    "build": "node scripts/local-dev.mjs build",
+    "lint": "node scripts/local-dev.mjs lint"
+  }
+}
