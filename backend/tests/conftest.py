@@ -5,6 +5,8 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
+from app.core.config import Settings
+
 sandbox = TemporaryDirectory(prefix="analyst-tests-")
 atexit.register(sandbox.cleanup)
 os.environ["ANALYST_DATABASE_URL"] = f"sqlite:///{Path(sandbox.name) / 'test.sqlite3'}"
@@ -12,10 +14,13 @@ os.environ["ANALYST_STORAGE_DIR"] = str(Path(sandbox.name) / "objects")
 os.environ["MPLCONFIGDIR"] = str(Path(sandbox.name) / "matplotlib")
 os.environ["ANALYST_EAGER"] = "true"
 os.environ["ANALYST_REDIS_URL"] = ""
+os.environ["ANALYST_CELERY_BROKER_URL"] = ""
+os.environ["ANALYST_CELERY_RESULT_BACKEND"] = ""
 os.environ["ANALYST_LLM_PROVIDER"] = "none"
 os.environ["ANALYST_LLM_API_KEY"] = ""
 os.environ["ANALYST_RESEARCH_API_KEY"] = ""
 os.environ["ANALYST_ORIGIN"] = "http://testserver"
+Settings.model_config["env_file"] = None
 
 
 @pytest.fixture(scope="session", autouse=True)

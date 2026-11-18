@@ -3,7 +3,7 @@ name: Verify platform
 on:
   pull_request:
   push:
-    branches: [main, "codex/**"]
+    branches: [main, "codex/**", "fix/**"]
 
 permissions:
   contents: read
@@ -43,7 +43,7 @@ jobs:
           python3 -c 'from pathlib import Path; from secrets import token_hex; p=Path(".env"); p.write_text(p.read_text().replace("POSTGRES_PASSWORD=\n", "POSTGRES_PASSWORD="+token_hex(24)+"\n"))'
       - run: docker compose up --build --wait --wait-timeout 180
       - working-directory: frontend
-        run: npm ci && npm run check && npx playwright install --with-deps chromium && npm test
+        run: npm ci && npm run check && npm run lint && npx playwright install --with-deps chromium && npm test
       - name: Collect Compose diagnostics
         if: failure()
         run: |

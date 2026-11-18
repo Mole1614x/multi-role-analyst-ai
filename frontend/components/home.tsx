@@ -87,7 +87,7 @@ export function ProjectForm() {
 }
 
 function Team() {
-  const spaces=useWorkspaces(), cache=useQueryClient();
+  const spaces=useWorkspaces();
   const [choice,setChoice]=useState(""),[error,setError]=useState<unknown>(null),[pending,setPending]=useState(false);
   const workspace=spaces.data?.find(w=>w.id===choice)??spaces.data?.[0];
   const base=`/workspaces/${workspace?.id}`;

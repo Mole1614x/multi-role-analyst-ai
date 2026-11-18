@@ -8,7 +8,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \
-    uv sync --locked --no-dev && uv cache clean
+    uv sync --locked --no-dev --no-install-project && uv cache clean
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./

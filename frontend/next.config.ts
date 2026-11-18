@@ -5,7 +5,7 @@ const config: NextConfig = {
   poweredByHeader: false,
   output: "standalone",
   async rewrites() {
-    const api = process.env.API_INTERNAL_URL ?? "http://127.0.0.1:8000";
+    const api = (process.env.API_INTERNAL_URL || process.env.BACKEND_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
     return [{ source: "/api/:path*", destination: `${api}/api/:path*` }];
   },
   async headers() {

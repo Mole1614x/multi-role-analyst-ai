@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from redis import Redis
 from redis.exceptions import RedisError
@@ -75,19 +75,28 @@ def live():
     return {"status": "alive"}
 
 
+@app.get("/health", include_in_schema=False)
 @app.get("/api/health/ready", tags=["health"])
 def ready():
     try:
         check_db()
         config = settings()
-        if not config.eager and not config.redis_url:
+        if not config.eager and not config.broker_url:
             raise HTTPException(503, "A Redis broker is required for background jobs.")
-        if config.redis_url:
-            with Redis.from_url(config.redis_url, socket_connect_timeout=2, socket_timeout=2) as client:
+        redis_urls = [config.redis_url]
+        if not config.eager and config.broker_url.startswith(("redis://", "rediss://", "unix://")):
+            redis_urls.append(config.broker_url)
+        for url in dict.fromkeys(filter(None, redis_urls)):
+            with Redis.from_url(url, socket_connect_timeout=2, socket_timeout=2) as client:
                 client.ping()
     except (SQLAlchemyError, RedisError) as exc:
         raise HTTPException(503, "A required service is unavailable.") from exc
     return {"status": "ready"}
+
+
+@app.get("/docs", include_in_schema=False)
+def docs():
+    return RedirectResponse("/api/docs")
 
 
 @app.get("/metrics", include_in_schema=False)

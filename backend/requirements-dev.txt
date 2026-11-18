@@ -1,0 +1,6 @@
+# Development dependencies. Keep in sync with pyproject.toml.
+-r requirements.txt
+pypdf>=6,<8
+pytest>=8.4,<10
+respx>=0.22,<1
+ruff>=0.14,<1

@@ -3,7 +3,9 @@ from celery import Celery
 from app.core.config import settings
 
 config = settings()
-celery = Celery("analyst", broker=config.redis_url or "memory://")
+celery = Celery(
+    "analyst", broker=config.broker_url or "memory://", backend=config.celery_result_backend or None
+)
 celery.conf.update(
     task_ignore_result=True,
     task_always_eager=config.eager,
