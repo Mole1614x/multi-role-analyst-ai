@@ -1,0 +1,102 @@
+name: analyst-workspace
+
+x-backend: &backend
+  image: analyst-workspace-backend:local
+  build: ./backend
+  env_file: .env
+  environment:
+    ANALYST_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-analyst}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-analyst}
+    ANALYST_REDIS_URL: redis://redis:6379/0
+    ANALYST_EAGER: "false"
+    ANALYST_STORAGE_DIR: /srv/analyst/storage
+  volumes:
+    - objects:/srv/analyst/storage
+  init: true
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-analyst}
+      POSTGRES_USER: ${POSTGRES_USER:-analyst}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis:/data
+    restart: unless-stopped
+  migrate:
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+  api:
+    <<: *backend
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+    restart: unless-stopped
+  worker:
+    <<: *backend
+    command: ["celery", "-A", "app.services.jobs.celery", "worker", "--loglevel=INFO", "--concurrency=2"]
+    stop_grace_period: 130s
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.services.jobs.celery inspect ping -d celery@$$HOSTNAME -t 3"]
+      interval: 30s
+      timeout: 12s
+      retries: 3
+      start_period: 25s
+    restart: unless-stopped
+  scheduler:
+    <<: *backend
+    command: ["celery", "-A", "app.services.jobs.celery", "beat", "--loglevel=INFO", "--schedule=/srv/analyst/storage/celerybeat-schedule"]
+    depends_on:
+      worker:
+        condition: service_healthy
+    restart: unless-stopped
+  frontend:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  postgres:
+  redis:
+  objects:

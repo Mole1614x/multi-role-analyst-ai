@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+*.sqlite*
+.coverage
+storage/
+frontend/.next/
+frontend/next-env.d.ts
+frontend/node_modules/
+frontend/test-results/
+frontend/playwright-report/
+*.tsbuildinfo
+.DS_Store
