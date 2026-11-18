@@ -16,6 +16,8 @@ node --version
 npm --version
 ```
 
+On an Intel Mac, pip may build the Argon2 password-hashing bindings from source. If you need the compiler, run `xcode-select --install` and complete the installer. The Argon2 build also uses CMake. If its automatic CMake setup fails, install a Monterey-compatible release of [CMake](https://cmake.org/download/) and make sure `cmake --version` works in the same terminal. [Argon2 build instructions](https://pypi.org/project/argon2-cffi-bindings/)
+
 If your Homebrew installation can build both services for Monterey, install and start them with these commands.
 
 ```bash
