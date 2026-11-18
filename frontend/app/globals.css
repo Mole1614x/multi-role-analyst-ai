@@ -168,6 +168,8 @@ progress{width:100%;height:11px;accent-color:#428b65}
 .breadcrumb-slash{color:var(--dim)}
 .workspace-main{max-width:1350px;min-width:0;margin:auto;padding:30px 32px 46px}
 .view-heading{display:flex;justify-content:space-between;align-items:end;gap:16px;margin-bottom:24px;flex-wrap:wrap}
+.view-heading>div{min-width:0}
+.view-heading h1{overflow-wrap:anywhere}
 .view-heading p{margin-top:8px;color:var(--muted);line-height:1.45}
 .workspace-welcome{position:relative;isolation:isolate;overflow:hidden;min-height:236px;display:flex;align-items:center;border-radius:13px;
   padding:32px;background:radial-gradient(ellipse at 84% 0%,#367557,transparent 65%),#174934;color:#f5fff8}

@@ -61,7 +61,8 @@ export function ChartView({chart, filter=false}: {chart:Chart;filter?:boolean}) 
   const [filterValue,setFilterValue]=useState("");
   const [from,setFrom]=useState("");
   const [to,setTo]=useState("");
-  const x=chart.x ?? "group", y=chart.y ?? "value";
+  const x=chart.x ?? (chart.type==="heatmap" ? "column" : chart.type==="table" ? chart.columns?.[0] ?? "group" : "group");
+  const y=chart.y ?? "value";
   const temporal=chart.rows.length > 0 && chart.rows.every(row=>typeof row[x]==="string" && /^\d{4}-\d{2}-\d{2}/.test(String(row[x])));
   const list=chart.rows.filter(row=>(!filterValue || String(row[x]).toLowerCase().includes(filterValue.toLowerCase())) &&
     (!from || String(row[x]).slice(0,10)>=from) && (!to || String(row[x]).slice(0,10)<=to));

@@ -11,13 +11,13 @@ Uvicorn serves interactive documentation at `/api/docs` and the machine-readable
 | `/connectors` | Discover and import administrator-configured PostgreSQL sources |
 | `/sql/draft`, `/sql` | Draft analytical SQL, execute and save results, inspect query history, export CSV |
 | `/analyses`, `/jobs` | Submit, list, inspect, stream, cancel, and retry analysis, report, and import jobs |
-| `/dashboards` | Save one or more charts, list snapshots, export chart data |
+| `/dashboards` | Save one or more charts, list snapshots, export CSV data or Plotly JSON |
 | `/reports`, `/artifacts/{id}` | Queue a format conversion and download the finished artifact |
 | `/schedules` | Create approved recurring jobs, inspect or stop schedules |
 | `/api/admin`, `/api/health/*` | Administrator deployment counts, liveness and readiness |
 
 For a job response, use `GET /jobs/{id}` until `status` is `completed`, `failed`, or `canceled`. Event streams at `GET /jobs/{id}/events` send JSON snapshots with status and trace. Reconnects can read the current state with an ordinary GET.
 
-Automatic local queries understand aggregation of named numeric fields, row counts, and grouping. One optional join can use `dataset_b`; the primary table is `dataset`. The canonical SQL and source version IDs are recorded. Select a stored analytical result for dashboard and report creation.
+Automatic local queries understand aggregation of named numeric fields, row counts, and grouping. Use `dataset` for the primary table and `dataset_b` for an optional join. The canonical SQL and source version IDs are recorded. Select a stored analytical result for dashboard and report creation.
 
 Validation errors use a `detail` field. A project or subordinate resource outside the current tenant returns 404. Insufficient permissions for a known resource return 403.

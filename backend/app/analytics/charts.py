@@ -91,3 +91,56 @@ def build(frame: pd.DataFrame, spec: ChartSpec) -> dict:
         "method": f"{spec.aggregation} of {y or 'rows'} grouped by {x}",
         "truncated": len(limited) < len(series),
     }
+
+
+def plotly_document(chart: dict) -> dict:
+    import plotly.graph_objects as go
+
+    kind = chart["type"]
+    rows = chart["rows"]
+    x, y = chart.get("x", "group"), chart.get("y", "value")
+    labels = [row.get(x) for row in rows]
+    values = [row.get(y) for row in rows]
+    if kind == "line":
+        series = [go.Scatter(x=labels, y=values, mode="lines", name=y)]
+        for bound in ("lower", "upper"):
+            if any(bound in row for row in rows):
+                series.append(
+                    go.Scatter(
+                        x=labels,
+                        y=[row.get(bound) for row in rows],
+                        mode="lines",
+                        name=bound,
+                        line={"dash": "dot"},
+                    )
+                )
+    elif kind == "pie":
+        series = [go.Pie(labels=labels, values=values)]
+    elif kind == "scatter":
+        series = [go.Scatter(x=labels, y=values, mode="markers")]
+    elif kind == "heatmap":
+        columns = chart["columns"]
+        series = [
+            go.Heatmap(
+                x=columns,
+                y=[row["column"] for row in rows],
+                z=[[row.get(column) for column in columns] for row in rows],
+                zmin=-1,
+                zmax=1,
+            )
+        ]
+    elif kind == "table":
+        columns = chart["columns"]
+        series = [
+            go.Table(
+                header={"values": columns},
+                cells={"values": [[row.get(column) for row in rows] for column in columns]},
+            )
+        ]
+    elif kind == "kpi" and values and values[0] is not None:
+        series = [go.Indicator(mode="number", value=values[0])]
+    else:
+        series = [go.Bar(x=labels, y=values)]
+    return go.Figure(
+        data=series, layout={"title": {"text": chart.get("title", chart["method"])}, "template": None}
+    ).to_plotly_json()

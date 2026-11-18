@@ -9,8 +9,9 @@ from langsmith import tracing_context
 from pydantic import BaseModel, Field
 
 from app.agents import providers
-from app.analytics import charts, roles, sql, statistics
+from app.analytics import charts, roles, sql
 from app.analytics.data import load
+from app.analytics.tools import TOOLS
 from app.core.config import settings
 from app.db.checkpoints import checkpointer
 from app.db.models import Version
@@ -90,18 +91,25 @@ def run(
                 try:
                     columns = [{"name": c["name"], "type": c["type"]} for c in profile["columns"]]
                     plan_value, usage = providers.plan(request.prompt, columns)
+                    state = state | {"provider_usage": usage}
                     query = sql.validate(plan_value.sql, {"dataset"}) if plan_value.sql else None
                     method = f"{usage['provider']} planning"
-                    state = state | {"provider_usage": usage}
                 except (ValueError, KeyError, TypeError, IndexError, providers.httpx.HTTPError):
                     limitations.append("The model plan was unavailable or rejected. Local planning was used.")
             if not query:
                 try:
                     query = sql.draft(request.prompt, source_frame())
                 except ValueError:
-                    limitations.append(
-                        "No aggregate query could be inferred. Role-specific metrics are shown when available."
-                    )
+                    if previous and previous.get("objective"):
+                        try:
+                            query = sql.draft(f"{request.prompt} {previous['objective']}", source_frame())
+                            step("Previous analysis context", source_job=previous["id"])
+                        except ValueError:
+                            pass
+                    if not query:
+                        limitations.append(
+                            "No aggregate query could be inferred. Role-specific metrics are shown when available."
+                        )
         return {
             "query": query,
             "method": method,
@@ -149,14 +157,7 @@ def run(
         if privacy_hr:
             raise ValueError("HR workflows currently support aggregate turnover analysis only.")
         frame = source_frame()
-        step(
-            {
-                "forecast": "Forecast",
-                "model": "Model evaluation",
-                "compare": "Statistical test",
-                "chart": "Chart builder",
-            }[request.mode]
-        )
+        tool = TOOLS[request.mode]
         if request.mode == "forecast":
             metric = request.value or sql.column_for(
                 request.prompt, list(frame.select_dtypes(include="number"))
@@ -164,20 +165,24 @@ def run(
             dates = request.date or next(
                 (c for c in frame if c.casefold() in {"date", "month", "week", "timestamp"}), ""
             )
-            return {"result": {"forecast": statistics.forecast(frame, dates, metric or "", request.horizon)}}
-        if request.mode == "model":
-            return {
-                "result": {
-                    "model": statistics.model(
-                        frame, request.features, request.value, request.classification, request.date or None
-                    )
-                }
+            if not dates or not metric:
+                raise ValueError("Choose a date field and a separate numeric measure.")
+            parameters = {"date": dates, "value": metric, "horizon": request.horizon}
+        elif request.mode == "model":
+            parameters = {
+                "features": request.features,
+                "target": request.value,
+                "classification": request.classification,
+                "order_by": request.date or None,
             }
-        if request.mode == "compare":
-            return {"result": {"comparison": statistics.compare(frame, request.date, request.value)}}
-        if request.chart is None:
-            raise ValueError("Select chart fields.")
-        return {"result": {"chart": charts.build(frame, request.chart)}}
+        elif request.mode == "compare":
+            parameters = {"group": request.date, "value": request.value}
+        else:
+            if request.chart is None:
+                raise ValueError("Select chart fields.")
+            parameters = request.chart.model_dump()
+        step(tool.name, **parameters)
+        return {"result": {tool.result_key: tool.execute(frame, parameters)}}
 
     def visualize(state: State):
         step("Visualization")

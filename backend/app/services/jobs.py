@@ -109,7 +109,15 @@ def execute(job_id: str):
                 request = AnalysisInput.model_validate(job.payload)
                 version = db.get(Version, request.version_id) if request.version_id else None
                 previous = db.get(Job, request.previous_job_id) if request.previous_job_id else None
-                context = {"id": previous.id, "summary": previous.result["summary"]} if previous else None
+                context = (
+                    {
+                        "id": previous.id,
+                        "summary": previous.result["summary"],
+                        "objective": previous.result["plan"]["objective"],
+                    }
+                    if previous
+                    else None
+                )
                 result = run(f"{job_id}:{job.checkpoint_epoch}", request, version, progress, context)
             elif job.kind == "report":
                 progress("Report generation", {"format": job.payload["format"]})

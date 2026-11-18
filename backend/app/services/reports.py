@@ -2,6 +2,7 @@ import csv
 import html
 import json
 import re
+from base64 import b64encode
 from datetime import UTC, datetime
 from io import BytesIO, StringIO
 from textwrap import wrap
@@ -44,22 +45,56 @@ def output_csv(columns: list[str], rows: list[dict]) -> bytes:
 
 
 def figure(chart: dict):
-    if chart.get("type") not in {"bar", "line", "pie", "histogram"} or not chart.get("rows"):
-        return None
-    x, y = chart["x"], chart["y"]
-    rows = chart["rows"][:30]
-    labels = [str(row.get(x))[:20] for row in rows if isinstance(row.get(y), (int, float))]
-    values = [row[y] for row in rows if isinstance(row.get(y), (int, float))]
-    if not values:
+    kind = chart.get("type")
+    if kind not in {"bar", "line", "pie", "histogram", "scatter", "heatmap"} or not chart.get("rows"):
         return None
     fig = Figure(figsize=(8, 3.2), layout="constrained")
     axis = fig.subplots()
-    if chart["type"] == "line":
-        axis.plot(labels, values, color="#167851")
+    if kind == "heatmap":
+        columns = chart["columns"]
+        matrix = [
+            [row[column] if row[column] is not None else float("nan") for column in columns]
+            for row in chart["rows"]
+        ]
+        heatmap = axis.imshow(matrix, vmin=-1, vmax=1, cmap="BrBG")
+        axis.set_xticks(range(len(columns)), columns)
+        axis.set_yticks(range(len(columns)), columns)
+        fig.colorbar(heatmap, ax=axis, label="Pearson correlation")
     else:
-        axis.bar(labels, values, color="#167851")
-    axis.set_title(chart["method"])
-    axis.tick_params(axis="x", labelrotation=60, labelsize=7)
+        x, y = chart["x"], chart["y"]
+        rows = chart["rows"][-60:] if kind == "line" else chart["rows"][:30]
+        points = [
+            row
+            for row in rows
+            if isinstance(row.get(y), (int, float))
+            and (kind != "scatter" or isinstance(row.get(x), (int, float)))
+        ]
+        if not points:
+            return None
+        labels = [str(row.get(x))[:20] for row in points]
+        values = [row[y] for row in points]
+        if kind == "line":
+            indices = list(range(len(points)))
+            axis.plot(indices, values, color="#167851")
+            if any("lower" in row for row in points):
+                lower = [row.get("lower", float("nan")) for row in points]
+                upper = [row.get("upper", float("nan")) for row in points]
+                axis.fill_between(indices, lower, upper, color="#6b84bd", alpha=0.25)
+            spacing = max(1, len(labels) // 8)
+            axis.set_xticks(indices[::spacing], labels[::spacing])
+        elif kind == "pie" and any(values):
+            axis.pie(values, labels=labels, textprops={"fontsize": 8, "parse_math": False})
+        elif kind == "scatter":
+            axis.scatter([row[x] for row in points], values, color="#167851")
+            axis.set_xlabel(x, parse_math=False)
+            axis.set_ylabel(y, parse_math=False)
+        else:
+            axis.bar(labels, values, color="#167851")
+    axis.set_title(chart["method"], parse_math=False)
+    if kind != "pie":
+        axis.tick_params(axis="x", labelrotation=60, labelsize=7)
+        for label in axis.get_xticklabels() + axis.get_yticklabels():
+            label.set_parse_math(False)
     image = BytesIO()
     FigureCanvasAgg(fig).print_png(image)
     image.seek(0)
@@ -99,7 +134,7 @@ def generate(format_name: str, title: str, result: dict) -> bytes:
     columns = table.get("columns") or (list(rows[0]) if rows else [])
     summary = [{"Section": key, "Value": present(value)} for key, value in sections]
     chart = result.get("chart")
-    graphic = figure(chart) if chart and format_name in {"pdf", "pptx", "xlsx"} else None
+    graphic = figure(chart) if chart and format_name in {"pdf", "pptx", "xlsx", "html"} else None
     output = BytesIO()
     if format_name == "csv":
         if not rows:
@@ -141,9 +176,15 @@ def generate(format_name: str, title: str, result: dict) -> bytes:
             if rows
             else ""
         )
+        graphic_html = ""
+        if graphic:
+            encoded = b64encode(graphic[1].getvalue()).decode("ascii")
+            graphic_html = (
+                f"<h2>Analysis chart</h2><img alt='Analysis chart' src='data:image/png;base64,{encoded}'>"
+            )
         return (
             f"<!doctype html><html lang='en'><meta charset='utf-8'><title>{html.escape(title)}</title>"
-            f"<body><h1>{html.escape(title)}</h1>{body}{data_table}</body></html>"
+            f"<body><h1>{html.escape(title)}</h1>{body}{graphic_html}{data_table}</body></html>"
         ).encode()
     if format_name == "xlsx":
         with xlsxwriter.Workbook(
@@ -180,8 +221,8 @@ def generate(format_name: str, title: str, result: dict) -> bytes:
             chunks = [lines[i : i + 45] for i in range(0, len(lines), 45)]
             for index, chunk in enumerate(chunks):
                 page = Figure(figsize=(8.27, 11.69))
-                page.text(0.08, 0.95, title[:90], size=17, color="#174d3a")
-                page.text(0.08, 0.90, "\n".join(chunk), va="top", size=8, linespacing=1.38)
+                page.text(0.08, 0.95, title[:90], size=17, color="#174d3a", parse_math=False)
+                page.text(0.08, 0.90, "\n".join(chunk), va="top", size=8, linespacing=1.38, parse_math=False)
                 page.text(0.08, 0.05, f"{index + 1} / {len(chunks) + bool(graphic)}", size=8)
                 pdf.savefig(page)
             if graphic:
@@ -198,6 +239,21 @@ def generate(format_name: str, title: str, result: dict) -> bytes:
                     paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
                     paragraph.text = f"{label} — {present(value)[:230]}"
                     paragraph.font.size = Pt(15)
+        if columns and rows:
+            slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+            slide.shapes.title.text = "Result data preview"
+            fields = columns[:6]
+            entries = rows[:8]
+            table = slide.shapes.add_table(
+                len(entries) + 1, len(fields), Inches(0.5), Inches(1.5), Inches(9), Inches(4)
+            ).table
+            for row_index, values in enumerate(
+                [fields] + [[entry.get(c) for c in fields] for entry in entries]
+            ):
+                for column_index, cell in enumerate(values):
+                    box = table.cell(row_index, column_index).text_frame
+                    box.text = ("—" if cell is None else str(cell))[:55]
+                    box.paragraphs[0].font.size = Pt(11)
         if graphic:
             slide = presentation.slides.add_slide(presentation.slide_layouts[5])
             slide.shapes.title.text = "Analysis chart"

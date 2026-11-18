@@ -11,7 +11,7 @@ from sqlalchemy import func, select, update
 
 from app.agents import providers
 from app.agents.workflow import AnalysisInput
-from app.analytics import data, sql
+from app.analytics import charts, data, sql
 from app.api.common import job_for, version_for
 from app.core.config import settings
 from app.core.security import DB, Actor, audit, limiter, project_for
@@ -342,13 +342,23 @@ def save_dashboard(project_id: str, body: SaveDashboard, db: DB, user: Actor):
 
 
 @router.get("/dashboards/{dashboard_id}/export")
-def export_dashboard(project_id: str, dashboard_id: str, db: DB, user: Actor):
+def export_dashboard(
+    project_id: str, dashboard_id: str, db: DB, user: Actor, format: Literal["csv", "plotly"] = "csv"
+):
     project_for(db, user, project_id)
     record = db.scalar(
         select(Dashboard).where(Dashboard.id == dashboard_id, Dashboard.project_id == project_id)
     )
     if not record:
         raise HTTPException(404, "Dashboard not found.")
+    if format == "plotly":
+        panels = record.chart.get("panels", [record.chart])
+        export = {"title": record.title, "figures": [charts.plotly_document(panel) for panel in panels]}
+        return Response(
+            json.dumps(export),
+            media_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="dashboard-plotly.json"'},
+        )
     if "panels" in record.chart:
         rows = [
             {"Panel": panel["title"]} | {f"Data: {column}": value for column, value in entry.items()}

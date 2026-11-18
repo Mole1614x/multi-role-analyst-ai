@@ -15,9 +15,17 @@ def run():
         with context.begin_transaction():
             context.run_migrations()
         return
+
+    def include_name(name, kind, _parents):
+        if kind != "table":
+            return True
+        return name not in {"checkpoints", "checkpoint_writes", "checkpoint_blobs", "checkpoint_migrations"}
+
     engine = create_engine(url, poolclass=pool.NullPool)
     with engine.connect() as connection:
-        context.configure(connection=connection, target_metadata=Base.metadata, compare_type=True)
+        context.configure(
+            connection=connection, target_metadata=Base.metadata, compare_type=True, include_name=include_name
+        )
         with context.begin_transaction():
             context.run_migrations()
 
